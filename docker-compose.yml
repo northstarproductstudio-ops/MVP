@@ -1,0 +1,12 @@
+# Local Postgres for development. Storage: point SUPABASE_URL at a Supabase dev project
+# or the Supabase CLI local stack (`supabase start`); there is no filesystem stand-in.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fmcg
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes:
+  pgdata: {}

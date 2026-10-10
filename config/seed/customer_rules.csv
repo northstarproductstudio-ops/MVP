@@ -1,0 +1,11 @@
+order,match,pattern,platform
+1,contains,symbiate,internal
+2,prefix,moonstone,blinkit
+3,prefix,superwell,blinkit
+4,prefix,swiggy,instamart
+5,prefix,scootsy,instamart
+6,prefix,zepto,zepto
+7,prefix,ircpl,bigbasket
+8,contains,innovative retail,bigbasket
+9,prefix,amazon,amazon
+10,prefix,flipkart,flipkart

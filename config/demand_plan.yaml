@@ -1,0 +1,114 @@
+# Business thresholds for demand_plan v1.
+# Seeded into meta.config_version on deploy (scripts/seed.py); a change creates a
+# new version and later runs pin it. No business threshold lives in code.
+# Values marked "assumed" are build defaults awaiting a decision (Master Build Spec,
+# "Build defaults for open decisions").
+
+plan:
+  cities: [Bangalore, Hyderabad, Chennai, Delhi, Mumbai]   # plus Other
+  platforms: [blinkit, instamart, zepto, bigbasket, amazon, flipkart, other]
+  quick_commerce: [blinkit, instamart, zepto]               # platforms with Dcluttr market data
+
+brand:
+  own_names: ["The Select Aisle"]
+  strip_tokens: ["The Select Aisle", "TSA"]                 # removed before crosswalk name matching
+
+history:
+  months: 3                 # M1..M3
+  new_weeks: 8
+  sellin_statuses: [invoiced, confirmed]
+
+base:
+  method: sellin_weighted   # ros is off until store-day data exists
+  weights: [0.5, 0.3, 0.2]  # M1, M2, M3 (Sep 0.5, Aug 0.3, Jul 0.2)
+  method_intermittent: croston_sba
+  croston_alpha: 0.1
+
+split:
+  min_units: 100
+
+abc:
+  cutoffs: [0.80, 0.95]
+
+sb:
+  adi: 1.32
+  cv2: 0.49
+
+trend:
+  cap: 0.20
+
+sellthrough:
+  cap: 0.15
+  osa_floor: 0.30
+
+fill:
+  lookback_days: 60
+  threshold: 0.95           # assumed
+  cap: 0.15                 # assumed
+
+stock:
+  target_doh: 21
+  stale_days: 14            # assumed
+
+market:
+  ceiling_ratio: 1.5
+  osa_window_days: 28
+  osa_min_window_days: 7
+  price_window_days: 14
+
+crosswalk:
+  auto_accept: 0.90
+  review_min: 0.75
+  hard_fail_unmapped: true  # step 1 rule in Entity resolution
+
+city_map:
+  unmatched_share_alert: 0.01
+
+agent:
+  enabled: true             # false for the November plan
+  prompt_version: v1
+  temperature: 0
+  max_lines_per_call: 40
+  parallel_calls: 5
+  timeout_s: 60
+  factor_bounds: [-0.30, 0.50]   # assumed, per agent factor
+  judgment_cap: 0.10        # assumed
+  explain_threshold: 0.10
+  band: [0.5, 2.0]
+  arith_tolerance: {units: 1, pct: 0.01}
+  show_reference: true
+
+netting:
+  enabled: false            # until the netting perspective is decided
+
+safety:
+  cover_days: {}            # by ABC then SB class; empty skips step 10
+
+edits:
+  category_spread: same_pct
+  pct_min: -90
+  pct_max: 300
+
+ask:
+  row_cap: 500
+  timeout_s: 5
+  history_messages: 20
+  run_wait_s: 90
+
+suggest:
+  move_pct: 0.15
+  max_questions: 6
+  osa_alert: 50
+
+step:
+  timeout_s: 120
+
+import:
+  detect_accept: 0.8
+  detect_tie: 0.1
+  detect_custom_below: 0.5
+  header_rows_to_try: 5
+  sample_rows_for_agent: 30
+
+schedule:
+  baseline_enabled: false  # scheduled baseline run is built, off by default

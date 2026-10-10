@@ -1,0 +1,58 @@
+# File-type library. One entry = one adapter class in core/domain/adapters/.
+# Seeded into core.file_type. signature: columns matched case/whitespace-insensitively.
+- key: erp_sales_orders
+  name: ERP sales orders (Zoho)
+  group: sellin
+  header_rows: [1]
+  signature: [SalesOrder ID, Order Date, Status, Customer Name, SKU, QuantityOrdered, Branch ID]
+  writes: core.sellin_line
+  filename_hints: [so, sales order, salesorder, zoho]
+- key: platform_po_instamart
+  name: Platform PO — Instamart (Swiggy)
+  group: po
+  header_rows: [1]
+  signature: [PoNumber, FacilityId, City, OrderedQty, ReceivedQty, BalancedQty, SkuCode]
+  writes: core.po_line
+  filename_hints: [swiggy, instamart]
+- key: platform_po_zepto
+  name: Platform PO — Zepto
+  group: po
+  header_rows: [1]
+  signature: [PO No., Del Location, SKU, EAN, Qty, ASN Quantity, GRN Quantity]
+  writes: core.po_line
+  filename_hints: [zepto]
+- key: platform_po_bigbasket
+  name: Platform PO / fill rate — BigBasket
+  group: po
+  header_rows: [1]
+  signature: [po_no, source_sku_id, po_quantity, grn_quantity, quantity_fillrate, po_type]
+  writes: core.po_line
+  filename_hints: [bb, bigbasket, fr]
+- key: platform_stock_blinkit
+  name: Platform stock (DOH/SOH) — Blinkit
+  group: stock
+  header_rows: [2]
+  signature: [backend_facility_id, item_id, backend_inv_qty, frontend_inv_qty, RR, DOH]
+  writes: core.stock_snapshot
+  filename_hints: [blinkit, doh, soh]
+- key: market_category_insight
+  name: Market data — Dcluttr category insight
+  group: market
+  header_rows: [3]
+  signature: [Date, Variant ID, Item ID, Brand, Category, Wt. OSA %, Est Category Share SP]
+  writes: core.market_daily
+  filename_hints: [dcluttr, categories, insight]
+- key: sku_master
+  name: SKU master
+  group: sku_master
+  header_rows: [1]
+  signature: [SKU, case size, MOQ, category]
+  writes: core.sku_master
+  filename_hints: [sku master, master]
+- key: custom
+  name: Custom
+  group: custom
+  header_rows: []
+  signature: []
+  writes: core.extra_value
+  filename_hints: []

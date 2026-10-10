@@ -1,0 +1,16 @@
+{
+  "command": "sh -c 'python3 -u -m uvicorn api.main:app --host 0.0.0.0 --port ${X_ZOHO_CATALYST_LISTEN_PORT}'",
+  "build_path": "/",
+  "stack": "python_3_12",
+  "env_variables": {
+    "APP_ENV": "production",
+    "SERVICE_NAME": "api",
+    "STORAGE_BUCKET": "fmcg-data",
+    "DB_POOL_MIN": "1",
+    "DB_POOL_MAX": "5",
+    "TMP_DIR": "/tmp/fmcg",
+    "DUCKDB_MEMORY_LIMIT": "1GB"
+  },
+  "memory": 2048,
+  "scripts": {}
+}

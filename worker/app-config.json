@@ -1,0 +1,14 @@
+{
+  "command": "sh -c 'python3 -u -m worker.main'",
+  "build_path": "/",
+  "stack": "python_3_12",
+  "env_variables": {
+    "APP_ENV": "production",
+    "SERVICE_NAME": "worker",
+    "STORAGE_BUCKET": "fmcg-data",
+    "TMP_DIR": "/tmp/fmcg",
+    "DUCKDB_MEMORY_LIMIT": "1GB"
+  },
+  "memory": 2048,
+  "scripts": {}
+}

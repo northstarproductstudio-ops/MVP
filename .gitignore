@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+dist/
+out/
+out-smoke/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+web/node_modules/
+web/dist/
+# client data never goes into the repo; tests use tests/fixtures/synthetic.py
+sample-data/
+*.parquet

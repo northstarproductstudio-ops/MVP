@@ -1,0 +1,38 @@
+[project]
+name = "fmcg-demand-planning"
+version = "0.1.0"
+description = "Demand Planning MVP — FMCG quick-commerce decision intelligence"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+extend-exclude = ["web", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "BLE", "N", "S608"]
+ignore = ["B008", "N999", "UP017", "E731", "B023", "N818", "N806"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S608", "B", "N"]
+"worker/repo.py" = ["S608"]
+"core/duck.py" = ["S608"]
+"worker/runner.py" = ["S608"]
+"worker/importer.py" = ["S608"]
+"core/domain/known_queries.py" = ["S608"]
+"core/domain/fenced.py" = ["S608"]
+"api/services/suggestions.py" = ["S608"]
+"scripts/**" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning:openpyxl.*", "ignore::FutureWarning"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+follow_imports = "silent"
+check_untyped_defs = false
+warn_unused_ignores = false
+files = ["core", "api", "worker"]
+exclude = ["worker/steps/0.*", "worker/steps/1.*"]

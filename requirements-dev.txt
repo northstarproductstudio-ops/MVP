@@ -1,0 +1,7 @@
+-r api/requirements.txt
+-r worker/requirements.txt
+pytest>=8
+ruff>=0.6
+mypy>=1.11
+pandas-stubs
+types-PyYAML
