@@ -84,7 +84,11 @@ export async function stream(
   signal?: AbortSignal,
 ): Promise<void> {
   let lastId = "";
-  for (let attempt = 0; attempt < 5; attempt++) {
+  let failures = 0;
+  let finished = false;
+  const terminal = new Set(["report_card", "run_failed", "message_done"]);
+  // AppSail closes responses at ~30 s, so GET streams are resumed until a terminal event arrives.
+  while (!finished && failures < 5) {
     const token = await getToken();
     try {
       const res = await fetch(`${API}${path}`, {
@@ -104,7 +108,7 @@ export async function stream(
       let buf = "";
       for (;;) {
         const { value, done } = await reader.read();
-        if (done) return;
+        if (done) break;
         buf += dec.decode(value, { stream: true });
         let idx;
         while ((idx = buf.indexOf("\n\n")) >= 0) {
@@ -114,12 +118,16 @@ export async function stream(
           if (!data) continue;
           const ev = JSON.parse(data.slice(6)) as SseEvent;
           lastId = ev.id || lastId;
+          if (terminal.has(ev.type)) finished = true;
           onEvent(ev);
         }
       }
+      if (body) return; // never replay a POST (it would re-send the question)
+      failures = 0;
     } catch (e) {
-      if (signal?.aborted || body) throw e; // never replay a POST (it would re-send the question)
-      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      if (signal?.aborted || body) throw e;
+      failures++;
+      await new Promise((r) => setTimeout(r, 1000 * failures));
     }
   }
 }

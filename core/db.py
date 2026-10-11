@@ -105,8 +105,22 @@ def worker_transaction(conn: psycopg.Connection) -> Iterator[psycopg.Cursor[Any]
             yield cur
 
 
-def connect_with_backoff(pool: ConnectionPool, max_wait: float = 30.0) -> None:
-    """Open the worker pool, retrying 1, 2, 4 … up to 30 s until the DB answers."""
+def reset_pool(mode: Mode, settings: Settings) -> Any:
+    """Drop a dead pool (a closed psycopg pool cannot be reopened) and build a new one."""
+    old = _pools.pop(mode, None)
+    if old is not None and not isinstance(old, AsyncConnectionPool):
+        try:
+            old.close()
+        except Exception:  # noqa: BLE001
+            pass
+    return get_pool(mode, settings)
+
+
+def connect_with_backoff(pool: ConnectionPool, settings: Settings | None = None, max_wait: float = 30.0
+                         ) -> ConnectionPool:
+    """Open the worker pool, retrying 1, 2, 4 … up to 30 s until the DB answers.
+
+    Returns the pool to use: a fresh one if the previous pool was closed by a failure."""
     delay = 1.0
     while True:
         try:
@@ -114,11 +128,13 @@ def connect_with_backoff(pool: ConnectionPool, max_wait: float = 30.0) -> None:
                 pool.open(wait=True, timeout=10)
             with pool.connection(timeout=10) as conn:
                 conn.execute("SELECT 1")
-            return
+            return pool
         except Exception as exc:  # noqa: BLE001
             log.warning("database unavailable, retrying in %.0fs: %s", delay, type(exc).__name__)
             time.sleep(delay)
             delay = min(delay * 2, max_wait)
+            if settings is not None:
+                pool = reset_pool("worker", settings)
 
 
 def ident(name: str, allowed: Sequence[str]) -> sql.Identifier:

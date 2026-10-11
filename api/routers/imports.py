@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
 from api.deps import CurrentUser, pool, store
+from api.services.wake import wake_worker
 from core.db import tenant_transaction
 from core.domain.adapters import REGISTRY
 from core.domain.variables import catalogue, categories
@@ -82,6 +83,7 @@ async def upload(session_id: str, user: CurrentUser, files: list[UploadFile] = F
             await cur.execute("INSERT INTO meta.job_queue (company_id, session_id, dataset_id, kind) "
                               "VALUES (%s,%s,%s,'import')", (user.company_id, session_id, did))
         out.append({"file_name": name, "status": "uploaded", "dataset_id": did, "size": size})
+    wake_worker()
     return {"files": out}
 
 
@@ -142,6 +144,7 @@ async def set_type(dataset_id: str, body: TypeFix, user: CurrentUser) -> dict[st
                                                           body.custom_name))
         await cur.execute("INSERT INTO meta.job_queue (company_id, session_id, dataset_id, kind) VALUES "
                           "(%s,%s,%s,'import')", (user.company_id, r["session_id"], dataset_id))
+    wake_worker()
     return {"dataset_id": dataset_id, "file_type": body.file_type, "status": "uploaded"}
 
 
@@ -203,6 +206,7 @@ async def save_mapping(dataset_id: str, body: MappingSave, user: CurrentUser) ->
                           "VALUES (%s,%s,%s,'materialize')", (user.company_id, d["session_id"], dataset_id))
         await cur.execute("SELECT match_method, count(*) AS n FROM core.sku_crosswalk GROUP BY 1")
         cw = {r["match_method"]: r["n"] for r in await cur.fetchall()}
+    wake_worker()
     by_cat: dict[str, list[str]] = defaultdict(list)
     for f, _ in stored:
         c = cat[f.variable].category if f.variable in cat else (f.category or "Other")

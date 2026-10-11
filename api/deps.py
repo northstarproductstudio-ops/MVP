@@ -43,16 +43,36 @@ class User:
     email: str | None
 
 
+@lru_cache(maxsize=1)
+def _jwks() -> jwt.PyJWKClient:
+    url = settings().supabase_url.rstrip("/") + "/auth/v1/.well-known/jwks.json"
+    return jwt.PyJWKClient(url, cache_keys=True, lifespan=3600)
+
+
+def verify_token(token: str) -> dict[str, Any]:
+    """Supabase user token: asymmetric signing keys (RS256/ES256, via the project's JWKS)
+    or the legacy shared secret (HS256)."""
+    alg = jwt.get_unverified_header(token).get("alg", "")
+    if alg == "HS256":
+        secret = settings().supabase_jwt_secret
+        if secret is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "HS256 tokens need SUPABASE_JWT_SECRET")
+        return jwt.decode(token, secret.get_secret_value(), algorithms=["HS256"], audience="authenticated")
+    if alg in ("RS256", "ES256", "EdDSA"):
+        key = _jwks().get_signing_key_from_jwt(token).key
+        return jwt.decode(token, key, algorithms=[alg], audience="authenticated")
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unsupported token algorithm")
+
+
 def current_user(authorization: Annotated[str | None, Header()] = None) -> User:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
     token = authorization.split(" ", 1)[1]
-    secret = settings().supabase_jwt_secret
-    if secret is None:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "auth not configured")
     try:
-        claims = jwt.decode(token, secret.get_secret_value(), algorithms=["HS256"], audience="authenticated")
-    except jwt.PyJWTError:
+        claims = verify_token(token)
+    except HTTPException:
+        raise
+    except (jwt.PyJWTError, jwt.PyJWKClientError):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token") from None
     company = (claims.get("app_metadata") or {}).get("company_id")
     if not company:

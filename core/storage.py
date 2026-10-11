@@ -10,7 +10,6 @@ Rules (Deployment-Readiness Spec, Storage layer):
 from __future__ import annotations
 
 import hashlib
-import io
 import re
 import time
 import uuid
@@ -62,9 +61,45 @@ def check_key(key: str, company_id: str | None = None) -> None:
 
 
 def df_to_parquet_bytes(df: pd.DataFrame) -> bytes:
-    buf = io.BytesIO()
-    df.to_parquet(buf, index=False, engine="pyarrow")
-    return buf.getvalue()
+    """Parquet via DuckDB (keeps pyarrow, ~160 MB, out of the AppSail deploy)."""
+    import tempfile
+
+    import duckdb
+
+    with tempfile.TemporaryDirectory() as d:
+        path = f"{d}/t.parquet"
+        con = duckdb.connect(":memory:")
+        try:
+            con.register("_df", _plain(df))
+            con.execute(f"COPY (SELECT * FROM _df) TO '{path}' (FORMAT parquet)")  # noqa: S608 - own temp path
+        finally:
+            con.close()
+        with open(path, "rb") as fh:
+            return fh.read()
+
+
+def read_parquet_file(path: Path | str) -> pd.DataFrame:
+    import duckdb
+
+    con = duckdb.connect(":memory:")
+    try:
+        return con.execute("SELECT * FROM read_parquet(?)", [str(path)]).df()
+    finally:
+        con.close()
+
+
+def _plain(df: pd.DataFrame) -> pd.DataFrame:
+    """Nullable pandas extension dtypes → plain numpy/object so DuckDB maps them cleanly."""
+    out = df.copy()
+    for c in out.columns:
+        dt = out[c].dtype
+        if isinstance(dt, pd.StringDtype):
+            out[c] = out[c].astype(object).where(out[c].notna(), None)
+        elif str(dt) == "Int64":
+            out[c] = out[c].astype("float64") if out[c].isna().any() else out[c].astype("int64")
+        elif str(dt) == "boolean":
+            out[c] = out[c].astype(object).where(out[c].notna(), None)
+    return out
 
 
 class Store:
@@ -189,7 +224,7 @@ class Store:
         return path
 
     def read_parquet(self, key: str, expected_sha256: str | None = None) -> pd.DataFrame:
-        return pd.read_parquet(self.get_parquet(key, expected_sha256))
+        return read_parquet_file(self.get_parquet(key, expected_sha256))
 
     def exists(self, key: str) -> bool:
         check_key(key)

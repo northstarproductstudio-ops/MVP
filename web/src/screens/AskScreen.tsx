@@ -114,7 +114,9 @@ export function AskScreen({ session, pendingQuestion, onConsumed }: {
             {t.role === "user" ? t.text : (
               <>
                 {t.tools.map((l, j) => <div className="toolchip" key={j}>↳ {l}</div>)}
-                {t.runId && <RunCard runId={t.runId} collapsed={Boolean(t.card)} />}
+                {t.runId && <RunCard runId={t.runId} collapsed={Boolean(t.card)}
+                  onCard={(card) => setTurns((ts) => ts.map((x, j) => (j === i && !x.card ? { ...x, card } : x)))}
+                  onFailed={(f) => setTurns((ts) => ts.map((x, j) => (j === i && !x.failed ? { ...x, failed: f } : x)))} />}
                 {t.failed && (
                   <div className="notice bad" style={{ marginTop: 8 }}>
                     Plan stopped{t.failed.step ? ` at ${t.failed.step}` : ""}: {t.failed.message}
@@ -147,7 +149,9 @@ export function AskScreen({ session, pendingQuestion, onConsumed }: {
   }
 }
 
-function RunCard({ runId, collapsed }: { runId: string; collapsed?: boolean }) {
+function RunCard({ runId, collapsed, onCard, onFailed }: {
+  runId: string; collapsed?: boolean; onCard?: (c: Json) => void; onFailed?: (f: Json) => void;
+}) {
   const [steps, setSteps] = useState<Record<number, Json>>({});
   const [agent, setAgent] = useState<Json | null>(null);
   const [status, setStatus] = useState<string>("running");
@@ -160,8 +164,8 @@ function RunCard({ runId, collapsed }: { runId: string; collapsed?: boolean }) {
     stream(`/runs/${runId}/events`, null, (e) => {
       if (e.type === "step") setSteps((s) => ({ ...s, [e.step_no]: e }));
       else if (e.type === "agent_progress") setAgent(e);
-      else if (e.type === "report_card") setStatus("done");
-      else if (e.type === "run_failed") setStatus("failed");
+      else if (e.type === "report_card") { setStatus("done"); onCard?.(e); }
+      else if (e.type === "run_failed") { setStatus("failed"); onFailed?.(e); }
     }, ctl.signal).catch(() => undefined);
     const t = setInterval(() => tick((x) => x + 1), 1000);
     return () => { ctl.abort(); clearInterval(t); };

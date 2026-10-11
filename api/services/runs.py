@@ -117,6 +117,9 @@ async def enqueue_run(cur: psycopg.AsyncCursor[Any], company_id: str, session_id
     run = await cur.fetchone()
     await cur.execute("INSERT INTO meta.job_queue (company_id, run_id, session_id, kind) VALUES (%s,%s,%s,%s)",
                       (company_id, run["id"], session_id, "backtest" if trigger == "backtest" else "plan"))
+    from api.services.wake import wake_worker
+
+    wake_worker()  # the job row commits with the caller's transaction; the worker polls every second
     return {"run_id": run["id"], "target_month": str(run["target_month"]), "as_of": str(as_of)}
 
 

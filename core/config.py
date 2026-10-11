@@ -55,8 +55,9 @@ class Settings(BaseSettings):
 # Variables each service must have; checked at startup so a missing one stops the
 # service with its name.
 REQUIRED = {
+    # SUPABASE_JWT_SECRET is only needed for projects still on legacy HS256 token signing
     "api": ["APP_ENV", "DATABASE_URL_POOLED", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
-            "SUPABASE_JWT_SECRET", "STORAGE_BUCKET", "OPENROUTER_API_KEY", "LLM_MODEL", "JOB_TOKEN"],
+            "STORAGE_BUCKET", "OPENROUTER_API_KEY", "LLM_MODEL", "JOB_TOKEN"],
     "worker": ["APP_ENV", "DATABASE_URL_SESSION", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
                "STORAGE_BUCKET", "OPENROUTER_API_KEY", "LLM_MODEL"],
 }

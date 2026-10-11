@@ -50,13 +50,14 @@ async def run_events(run_id: str, user: CurrentUser,
                      last_event_id: str | None = Header(default=None, alias="Last-Event-ID")):  # noqa: ANN201
     """Polls run_step once a second with a fresh short transaction; holds no connection
     between polls. Reconnects resume from Last-Event-ID (a monotonically increasing seq)."""
-    start_seq = int(last_event_id.split("-")[-1]) if last_event_id and last_event_id.split("-")[-1].isdigit() else 0
+    _ = last_event_id  # state is replayed on reconnect, so the id is informational
 
     async def gen() -> AsyncIterator[dict[str, Any]]:
         seq = 0
         seen: dict[int, tuple] = {}
         session_id = ""
-        deadline = time.monotonic() + 3600
+        # AppSail ends requests at 30 s: close before that; the client reconnects with Last-Event-ID
+        deadline = time.monotonic() + float(plan_config().get("ask.sse_max_s", 25))
         while time.monotonic() < deadline:
             async with tenant_transaction(pool(), user.company_id) as cur:
                 try:
@@ -87,8 +88,7 @@ async def run_events(run_id: str, user: CurrentUser,
             for ev in out:
                 seq += 1
                 ev["id"] = f"{run_id}-{seq}"
-                if seq > start_seq:
-                    yield ev
+                yield ev  # each (re)connect replays current state; clients apply events idempotently
             if s["status"] in ("succeeded", "failed", "cancelled"):
                 return
             await asyncio.sleep(1)

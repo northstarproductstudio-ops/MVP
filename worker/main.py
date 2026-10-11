@@ -11,6 +11,7 @@ Order (Deployment-Readiness Spec, Worker process lifecycle):
 from __future__ import annotations
 
 import json
+import os
 import signal
 import threading
 import time
@@ -78,8 +79,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
 
-    pool = get_pool("worker", settings)
-    connect_with_backoff(pool)
+    pool = connect_with_backoff(get_pool("worker", settings), settings)
     store = Store(settings.supabase_url, settings.supabase_service_role_key.get_secret_value(),
                   settings.storage_bucket, settings.tmp_dir)
     log.info("worker %s ready", settings.worker_id)
@@ -108,11 +108,39 @@ def main() -> None:
         except Exception:  # noqa: BLE001 - reconnect with backoff, never crash
             log.exception("worker loop error; reconnecting")
             time.sleep(1)
-            connect_with_backoff(pool)
+            pool = connect_with_backoff(pool, settings)
     log.info("worker exiting")
 
 
+class KeepAlive:
+    """While a job runs, GET our own public /health every minute so AppSail counts the
+    instance as active and does not scale it down mid-run (WORKER_URL; no-op if unset)."""
+
+    def __init__(self, interval: float = 60.0):
+        self.url = os.environ.get("WORKER_URL")
+        self.interval = interval
+        self._stop = threading.Event()
+
+    def start(self) -> KeepAlive:
+        if self.url:
+            threading.Thread(target=self._loop, name="keepalive", daemon=True).start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        import httpx
+
+        while not self._stop.wait(self.interval):
+            try:
+                httpx.get(self.url.rstrip("/") + "/health", timeout=10)  # type: ignore[union-attr]
+            except httpx.HTTPError:
+                log.warning("keep-alive ping failed")
+
+
 def handle(job: queue.Job, conn: Any, pool: Any, store: Store, settings: Any) -> None:
+    keepalive = KeepAlive().start()
     hb = queue.Heartbeat(pool, job.id).start()
     State.heartbeat = hb
     State.current_run = job.run_id
@@ -148,6 +176,7 @@ def handle(job: queue.Job, conn: Any, pool: Any, store: Store, settings: Any) ->
                 queue.finish(conn, job.id, "failed", str(exc)[:1000])
     finally:
         hb.stop()
+        keepalive.stop()
         State.heartbeat = None
         State.current_run = None
 

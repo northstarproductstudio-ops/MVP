@@ -21,7 +21,8 @@ BEGIN
   LOOP
     fqn := format('%I.%I', t.schema, t.name);
     EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', fqn);
-    EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', fqn);
+    -- Not FORCEd: the table owner (the worker's trusted role, which ran migrations) bypasses
+    -- RLS and enforces company_id in code; app_api is not the owner, so RLS always applies to it.
     EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO app_api', fqn);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %s', fqn);
     IF (t.schema || '.' || t.name) = ANY(shared_tables) THEN

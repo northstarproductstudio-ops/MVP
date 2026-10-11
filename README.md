@@ -107,23 +107,15 @@ sheet plugs in as `tests/golden/golden_lines.csv`.
 
 ## Deploy (Catalyst AppSail + Supabase)
 
-1. `python scripts/migrate.py` against `DATABASE_URL_SESSION` (with `APP_API_PASSWORD` set the
-   first time, to enable the `app_api` login). Services never migrate on startup.
-2. `python scripts/seed.py global` (with `GIT_SHA` set) — registers the config and workflow version.
-3. `./scripts/build.sh` → `dist/worker`, `dist/api` (each with `core/`, `prompts/`, `config/`,
-   `templates/` copied in). `catalyst deploy` the worker first, then the API.
-4. Set environment variables per service in the AppSail console (`.env.example` lists them all;
-   `app-config.json` holds only non-secret keys).
-5. Job Scheduling: `POST /jobs/sweep` every 2 minutes with header `X-Job-Token`; baseline job off.
-   (The worker also sweeps every 2 minutes as a fallback.)
-6. Check `GET /ready` on the API and `GET /health` on the worker.
-7. Web: `cd web && npm run build`, host `web/dist` (e.g. Catalyst web client hosting) with
-   `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`; add its origin to `CORS_ORIGINS`.
+Step-by-step runbook with checks after every step, the test script and troubleshooting:
+**[docs/DEPLOY.md](docs/DEPLOY.md)**. In short: Supabase project → `migrate.py` + `seed.py` →
+`build.sh` (vendors Linux/Python 3.12 wheels) → `catalyst appsail:add` + deploy worker then API →
+env vars in the console → Slate for the web app → smoke and resilience tests.
 
-**Confirm before the first deploy** (from the deployment spec): AppSail outbound access to the
-Supabase pooler on 5432/6543; the `app-config.json` keys for your Catalyst CLI version; maximum
-request duration for SSE; Job Scheduling calling an AppSail URL with a header; whether a service
-can deploy from a parent folder; the pooler client limit and Storage file-size limit on your plan.
+AppSail limits the code is built around: requests end at 30 s (SSE streams reconnect; chat waits
+20 s for a plan, then follows its progress stream), idle instances are scaled down (the API wakes
+the worker via `WORKER_URL`; the worker pings itself while a job runs), and dependencies are
+bundled into the build path (Parquet goes through DuckDB, so pyarrow is not shipped).
 
 ## Decisions taken while building (where the specs were silent or the data disagreed)
 

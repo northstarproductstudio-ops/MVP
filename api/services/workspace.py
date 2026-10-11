@@ -15,7 +15,7 @@ import psycopg
 
 from core import duck
 from core.domain.snapshot import DATA_TABLES, MAP_TABLES
-from core.storage import Store, snapshot_key
+from core.storage import Store, read_parquet_file, snapshot_key
 
 
 @dataclass
@@ -38,7 +38,7 @@ def _load_frames(store: Store, company_id: str, snap: dict[str, Any]) -> dict[st
     frames = {}
     for name in DATA_TABLES + MAP_TABLES:
         key = snapshot_key(company_id, snap["session_id"], snap["id"], name)
-        frames[name] = pd.read_parquet(store.get_parquet(key, snap["table_hashes"].get(name)))
+        frames[name] = read_parquet_file(store.get_parquet(key, snap["table_hashes"].get(name)))
     return frames
 
 

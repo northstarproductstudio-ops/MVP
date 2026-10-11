@@ -93,7 +93,8 @@ ask:
   row_cap: 500
   timeout_s: 5
   history_messages: 20
-  run_wait_s: 90
+  run_wait_s: 20            # AppSail ends requests at 30 s; the chat then follows the run's event stream
+  sse_max_s: 25             # each SSE response closes before 30 s; clients reconnect with Last-Event-ID
 
 suggest:
   move_pct: 0.15
