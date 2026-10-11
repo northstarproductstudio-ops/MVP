@@ -20,11 +20,13 @@ from psycopg.types.json import Jsonb
 from api.services import edits as edit_svc
 from api.services import runs as run_svc
 from api.services.plans import load_plan
+from api.services.readiness import dataset_states
 from api.services.workspace import Workspace, open_workspace, snapshot_row
 from core.db import tenant_transaction
 from core.domain.edits import EditError
 from core.domain.fenced import FencedQueryError, run_fenced
-from core.domain.known_queries import QUERIES, QueryParamError, run_known
+from core.domain.known_queries import QUERIES, QueryParamError, SourceMissing, run_known
+from core.domain.readiness import coverage, evaluate
 from core.llm import LLMClient, LLMError, load_prompt
 from core.logging import get_logger
 from core.models.edit import Edit
@@ -77,6 +79,27 @@ TOOL_LABELS = {"run_demand_plan": "Starting the demand plan", "get_run": "Readin
                "apply_edit": "Applying your change to the plan", "undo_edit": "Undoing the last change"}
 
 
+PLAN_CODES_NEEDING_SALES = {"no_sales_file", "no_sales_history", "sales_fields_unmapped"}
+GROUP_LABEL = {"sellin": "Zoho sales-order export", "po": "platform PO export", "stock": "Blinkit DOH export",
+               "market": "Dcluttr category insight export"}
+
+
+def missing_file(result: dict[str, Any]) -> dict[str, Any] | None:
+    """The file type a tool result says is missing, for the chat's "Add file" action."""
+    code = result.get("error_code")
+    group = None
+    if code in PLAN_CODES_NEEDING_SALES:
+        group = "sellin"
+    elif code == "source_missing":
+        group = result.get("file_type")
+    elif result.get("missing_sources"):
+        group = result["missing_sources"][0].get("file_type")
+    if not group:
+        return None
+    return {"file_group": group, "label": GROUP_LABEL.get(group, group),
+            "action": "map" if code == "sales_fields_unmapped" else "add"}
+
+
 def event(kind: str, session_id: str, **payload: Any) -> dict[str, Any]:
     return {"id": uuid.uuid4().hex, "type": kind, "session_id": session_id,
             "ts": datetime.now(UTC).isoformat(timespec="seconds"), **payload}
@@ -89,7 +112,7 @@ class AskTurn:
         self.company_id, self.user_id, self.session_id = company_id, user_id, session_id
         self.records: list[dict[str, Any]] = []
         self.llm = LLMClient(api_key=settings.openrouter_api_key.get_secret_value(), model=settings.llm_model,
-                             base_url=settings.openrouter_base_url, recorder=self.records.append)
+                             fallback_model=settings.llm_fallback_model, base_url=settings.openrouter_base_url, recorder=self.records.append)
         self.evidence: list[dict[str, Any]] = []
         self.current_run: str | None = None
 
@@ -134,6 +157,9 @@ class AskTurn:
                               "('user','assistant') ORDER BY created_at DESC LIMIT %s",
                               (self.session_id, int(self.cfg.get("ask.history_messages"))))
             history = list(reversed([dict(r) for r in await cur.fetchall()]))
+            states = await dataset_states(cur, self.session_id)
+            cov = coverage(states)
+            ready = evaluate(states)
             run_info: dict[str, Any] | None = None
             if self.current_run:
                 s = await run_svc.run_summary(cur, self.current_run)
@@ -141,8 +167,11 @@ class AskTurn:
                             "dp_total": s["dp_total"], "factors": s["factors"]}
         ws = await self._workspace()
         ws.con.close()
-        ctx = {"workspace": ws.summary, "current_run": run_info, "today": f"{datetime.now(UTC):%Y-%m-%d}"}
-        msgs = [{"role": "system", "content": load_prompt("ask_agent", "v1")},
+        summary = {**ws.summary, "coverage": cov}
+        ctx = {"workspace": summary, "plan_readiness": {"plan_ready": ready.plan_ready, "code": ready.code,
+                                                         "missing_for_plan": ready.as_dict()["blocking_display"]},
+               "current_run": run_info, "today": f"{datetime.now(UTC):%Y-%m-%d}"}
+        msgs = [{"role": "system", "content": load_prompt("ask_agent", self.cfg.get("ask.prompt_version", "v1"))},
                 {"role": "system", "content": "Context: " + json.dumps(ctx, default=str)}]
         msgs += [{"role": h["role"], "content": h["content"] or ""} for h in history]
         return msgs
@@ -172,6 +201,9 @@ class AskTurn:
             ws = await self._workspace()
             try:
                 res = run_known(ws.con, args.get("name", ""), args.get("params") or {})
+            except SourceMissing as exc:
+                await self._log(None, "known", args.get("name"), None, 0, started, str(exc))
+                return exc.as_dict()
             except QueryParamError as exc:
                 await self._log(args.get("question", ""), "known", args.get("name"), None, 0, started, str(exc))
                 return {"error": str(exc)}
@@ -184,17 +216,23 @@ class AskTurn:
         if name == "query_workspace":
             ws = await self._workspace()
             try:
-                res = await asyncio.to_thread(run_fenced, ws.con, args.get("sql", ""),
+                lk = await asyncio.to_thread(run_fenced, ws.con, args.get("sql", ""),
                                               int(self.cfg.get("ask.row_cap")), float(self.cfg.get("ask.timeout_s")))
             except FencedQueryError as exc:
                 await self._log(None, "fenced", None, args.get("sql"), 0, started, str(exc))
                 return {"error": str(exc)}
             finally:
                 ws.con.close()
-            self.evidence.append({"label": res.label, "query": res.sql, "rows": res.rows[:50],
-                                  "row_count": res.row_count})
-            await self._log(None, "fenced", None, res.sql, res.row_count, started, None)
-            return {"label": res.label, "row_count": res.row_count, "truncated": res.truncated, "rows": res.rows[:200]}
+            self.evidence.append({"label": lk.label, "query": lk.sql, "rows": lk.rows[:50],
+                                  "row_count": lk.row_count})
+            await self._log(None, "fenced", None, lk.sql, lk.row_count, started, None)
+            out = {"label": lk.label, "row_count": lk.row_count, "truncated": lk.truncated, "rows": lk.rows[:200]}
+            if lk.empty_tables:
+                missing = [SourceMissing(t) for t in lk.empty_tables]
+                out["missing_sources"] = [m.as_dict() for m in missing]
+                out["note"] = ("; ".join(str(m) for m in missing)
+                               + ". Say so instead of answering 0.")
+            return out
         if name == "apply_edit":
             rid = args.get("run_id") or self.current_run
             if not rid:
@@ -234,7 +272,8 @@ class AskTurn:
                 q = await run_svc.enqueue_run(cur, self.company_id, self.session_id, args.get("target_month"),
                                               args.get("scope"), "chat", self.user_id)
         except run_svc.PreconditionError as exc:
-            return {"error": str(exc)}
+            # Gap 7: structured, so the agent explains what is missing and what to do next
+            return exc.as_dict()
         rid = q["run_id"]
         self.current_run = rid
         emit(event("run_queued", self.session_id, run_id=rid, target_month=q["target_month"]))
@@ -323,8 +362,13 @@ class AskTurn:
                     result = {"error": f"{name} failed: {type(exc).__name__}"}
                 async for ev in drain():
                     yield ev
-                tool_log.append({"name": name, "args": args, "ok": "error" not in result,
-                                 "run_id": result.get("run_id") if isinstance(result, dict) else None})
+                missing = missing_file(result) if isinstance(result, dict) else None
+                if missing:  # Gap 12: the chat shows an "Add file" action under the reply
+                    yield event("missing_file", self.session_id, **missing)
+                tool_log.append({"name": name, "args": args,
+                                 "ok": isinstance(result, dict) and "error" not in result and "error_code" not in result,
+                                 "run_id": result.get("run_id") if isinstance(result, dict) else None,
+                                 "missing_file": missing})
                 messages.append({"role": "tool", "tool_call_id": tc.get("id"), "name": name,
                                  "content": json.dumps(result, default=str)[:60_000]})
         for ev in self.evidence:

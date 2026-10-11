@@ -14,6 +14,7 @@ class NewVariable(BaseModel):
     name: str
     category: str
     data_type: str = "text"
+    display_name: str | None = None  # Gap 11: plain words for planners
 
 
 class ProposedField(BaseModel):
@@ -77,9 +78,9 @@ IMPORT_AGENT_JSON_SCHEMA: dict[str, Any] = {
                 "confidence": {"type": "number"},
                 "new_variable": {"anyOf": [{"type": "null"}, {
                     "type": "object", "additionalProperties": False,
-                    "required": ["name", "category", "data_type"],
+                    "required": ["name", "category", "data_type", "display_name"],
                     "properties": {"name": {"type": "string"}, "category": {"type": "string"},
-                                   "data_type": {"type": "string"}}}]},
+                                   "data_type": {"type": "string"}, "display_name": {"type": "string"}}}]},
             }}},
     },
 }

@@ -29,7 +29,7 @@ Web (React) ──► fmcg-api (FastAPI) ──► OpenRouter (Ask agent, import
 | `worker/` | claim loop, heartbeat, runner, executor (runner contract), `steps/01_validate_inputs.py … 11_build_report.py`, import jobs |
 | `web/` | front end for the Figma screens (Import → Map fields → Ask, run card, report card, report views) |
 | `migrations/` | numbered SQL: schemas, tables, indexes, `app_api` role, RLS policies |
-| `prompts/` | `demand_plan/v1`, `import_agent/v1`, `ask_agent/v1` (versioned) |
+| `prompts/` | `demand_plan/v2` (category batches), `import_agent/v2`, `ask_agent/v2` (versioned; v1 kept for replay) |
 | `config/` | `demand_plan.yaml` (all thresholds), `seed/` (variables, file types, city aliases, customer rules) |
 | `templates/formatRef.xlsx` | export template |
 | `scripts/` | `migrate.py`, `seed.py`, `build.sh`, `plan_offline.py`, `dev_token.py`, `smoke_e2e.py` |
@@ -134,6 +134,23 @@ bundled into the build path (Parquet goes through DuckDB, so pyarrow is not ship
 - **Croston-SBA** is implemented natively (same recursion as StatsForecast's `CrostonSBA`) to keep
   the services small.
 - **Web framework:** React + Vite + TypeScript.
+
+## Gap fixes (Gap Fix Spec, 11 Oct 2026)
+
+| Gap | What changed | Where |
+|---|---|---|
+| 1–2 | Primary → fallback model on 429, 5xx, model/provider 400/404 or transport errors; one `agent_call` row per model attempt; no same-model retry on 429 and no rate-limit logic of our own | `core/llm.py`, `LLM_FALLBACK_MODEL` |
+| 3–5 | Planning agent runs one call per **category batch** (prompt v2): categories resolved mapped → template → Dcluttr → uncategorised; big categories split into whole-SKU sub-batches; uncategorised SKUs go to `agent.uncategorised_batches` general batches; category factors declared once and expanded per line in step 9; retry resends only failing SKUs; replay by batch key | steps 5, 7, 8, 9; `core/domain/categories.py`, `agent_checks.py` |
+| 6 | Python factors stay vectorised and model-free (guardrail; determinism test covers batching) | steps 2–7 |
+| 7 | Sales history is the hard gate: `no_sales_file`, `sales_fields_unmapped`, `no_sales_history`, `scope_has_no_history`; SKUs without history are excluded and listed as "Not planned", never planned as 0 | `api/services/runs.py`, step 1, report card |
+| 8 | Each file type is essential or enhancer (`file_types.yaml`); the Ask agent gets per-type coverage, known queries return `source_missing`, empty lookups are flagged, suggestions come only from imported types | `core/domain/readiness.py`, `known_queries.py`, `fenced.py`, Ask prompt v2 |
+| 8b | One factor → source registry; `core.factor.source_label`, reasoning `sources_used` / `factors_off`, overview sources line | `core/domain/factor_sources.py` |
+| 9 | Saved corrections win with zero import-agent calls (test) | `core/domain/importing.py` |
+| 10 | `GET /sessions/{id}/readiness` shares one rule with `preconditions()`; "What the plan needs" panel; saving a mapping is never blocked | `api/routers/datasets.py`, `ReadinessPanel.tsx` |
+| 11 | `display_name` and `help` on every variable; UI and messages use display names | `config/seed/variables.csv` |
+| 12 | Data screen and API: list, add, replace, remove, clear; 409 while a plan runs; finished runs keep their snapshot; nightly worker expiry of removed raw files | `api/routers/datasets.py`, `worker/expiry.py`, `DataScreen.tsx` |
+
+Migration `0006_gap_fixes.sql` adds the new columns. Run it before deploying this code.
 
 ## Still to do (owners per the plan)
 

@@ -15,9 +15,9 @@ from core.llm import LLMClient, LLMError, load_prompt
 def candidate_facts(con: duckdb.DuckDBPyConnection, has_plan: bool, move_pct: float, osa_alert: float,
                     fill_threshold: float) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
-    tables = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+    tables = present_tables(con)  # Gap 8: only file types actually imported produce questions
     if "sellin_line" not in tables:
-        return facts
+        return _non_sales_facts(con, tables, osa_alert, fill_threshold)
     moves = con.execute("""
         WITH m AS (SELECT date_trunc('month', order_date) AS m, city, platform,
                      sum(coalesce(qty_invoiced,0)+coalesce(qty_cancelled,0)) AS q
@@ -46,6 +46,29 @@ def candidate_facts(con: duckdb.DuckDBPyConnection, has_plan: bool, move_pct: fl
         ORDER BY abs(d) DESC LIMIT 3""").fetchall()
     for item, d in top:
         facts.append({"fact": "top_mover", "name": item, "change_units": int(d or 0)})
+    facts += _non_sales_facts(con, tables, osa_alert, fill_threshold, with_stock_age=True)
+    if has_plan and "plan_lines" in tables:
+        rev, ceil = con.execute("""SELECT count(*) FILTER (WHERE flag_for_review),
+                                   count(*) FILTER (WHERE flags LIKE '%market_ceiling%') FROM plan_lines""").fetchone()
+        facts.append({"fact": "plan_flags", "review": int(rev or 0), "market_ceiling": int(ceil or 0)})
+    return facts
+
+
+def present_tables(con: duckdb.DuckDBPyConnection) -> set[str]:
+    names = [r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()]
+    out = set()
+    for n in names:
+        try:
+            if con.execute(f'SELECT 1 FROM "{n}" LIMIT 1').fetchone():
+                out.add(n)
+        except duckdb.Error:
+            continue
+    return out
+
+
+def _non_sales_facts(con: duckdb.DuckDBPyConnection, tables: set[str], osa_alert: float, fill_threshold: float,
+                     with_stock_age: bool = False) -> list[dict[str, Any]]:
+    facts: list[dict[str, Any]] = []
     if "market_daily" in tables:
         low = con.execute(f"""SELECT platform, count(DISTINCT sku_code) FROM market_daily
             WHERE is_own_brand AND sku_code IS NOT NULL
@@ -60,19 +83,19 @@ def candidate_facts(con: duckdb.DuckDBPyConnection, has_plan: bool, move_pct: fl
             if rate is not None and rate < fill_threshold:
                 facts.append({"fact": "low_fill_rate", "platform": plat, "fill_rate": round(float(rate), 2)})
     if "stock_snapshot" in tables:
-        age = con.execute("SELECT date_diff('day', max(snapshot_date), (SELECT max(order_date) FROM sellin_line)) "
-                          "FROM stock_snapshot").fetchone()[0]
-        if age is not None and age > 14:
-            facts.append({"fact": "stale_stock", "days_old": int(age)})
-    if has_plan and "plan_lines" in tables:
-        rev, ceil = con.execute("""SELECT count(*) FILTER (WHERE flag_for_review),
-                                   count(*) FILTER (WHERE flags LIKE '%market_ceiling%') FROM plan_lines""").fetchone()
-        facts.append({"fact": "plan_flags", "review": int(rev or 0), "market_ceiling": int(ceil or 0)})
+        if with_stock_age:
+            age = con.execute("SELECT date_diff('day', max(snapshot_date), (SELECT max(order_date) FROM sellin_line)) "
+                              "FROM stock_snapshot").fetchone()[0]
+            if age is not None and age > 14:
+                facts.append({"fact": "stale_stock", "days_old": int(age)})
+        else:
+            facts.append({"fact": "stock_present"})
     return facts
 
 
-def template_questions(facts: list[dict[str, Any]], has_plan: bool, n: int) -> dict[str, list[str]]:
-    plan = ["Create a demand plan for next month"] if not has_plan else [
+def template_questions(facts: list[dict[str, Any]], has_plan: bool, n: int,
+                       has_sales: bool = True) -> dict[str, list[str]]:
+    plan = (["Create a demand plan for next month"] if has_sales else []) if not has_plan else [
         "How is next month's plan split by city?", "Which products have the largest plan?"]
     why, data = [], []
     for f in facts:
@@ -90,28 +113,33 @@ def template_questions(facts: list[dict[str, Any]], has_plan: bool, n: int) -> d
             data.append(f"What is the fill rate on {f['platform']} by SKU?")
         elif f["fact"] == "stale_stock":
             data.append("When was the stock data last updated?")
+        elif f["fact"] == "stock_present":
+            data.append("Which products have the fewest days on hand?")
         elif f["fact"] == "plan_flags" and f["review"]:
             plan.append("Which plan lines are flagged for review?")
     if not has_plan:
         why = []
-    out = {"plan": plan[:2], "why": why[:2], "data": data[:2] or ["Which products sold most last month?"]}
+    fallback = ["Which products sold most last month?"] if has_sales else []
+    out = {"plan": plan[:2], "why": why[:2], "data": data[:2] or fallback}
     return out if has_plan else {"plan": out["plan"][:1], "why": [], "data": out["data"]}
 
 
 def phrase(llm: LLMClient | None, facts: list[dict[str, Any]], has_plan: bool, n: int,
-           session_id: str, company_id: str) -> dict[str, list[str]]:
+           session_id: str, company_id: str, has_sales: bool = True,
+           prompt_version: str = "v1") -> dict[str, list[str]]:
     if llm is None or not facts:
-        return template_questions(facts, has_plan, n)
+        return template_questions(facts, has_plan, n, has_sales)
     try:
         res = llm.complete(role="ask", session_id=session_id, company_id=company_id, temperature=0.0,
                            max_tokens=400, messages=[
-                               {"role": "system", "content": load_prompt("ask_agent", "v1", "suggestions.md")
+                               {"role": "system", "content": load_prompt("ask_agent", prompt_version, "suggestions.md")
                                 .replace("{max_questions}", str(n))},
                                {"role": "user", "content": json.dumps({"has_plan": has_plan, "facts": facts})}])
         data = json.loads((res.content or "").strip().strip("`").removeprefix("json"))
         out = {k: [q for q in data.get(k, []) if isinstance(q, str)][:3] for k in ("plan", "why", "data")}
         if not has_plan:
-            out = {"plan": ["Create a demand plan for next month"], "why": [], "data": out["data"]}
+            out = {"plan": ["Create a demand plan for next month"] if has_sales else [], "why": [],
+                   "data": out["data"]}
         return out
     except (LLMError, ValueError, AttributeError):
-        return template_questions(facts, has_plan, n)
+        return template_questions(facts, has_plan, n, has_sales)

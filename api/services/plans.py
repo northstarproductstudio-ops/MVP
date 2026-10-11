@@ -12,7 +12,7 @@ from core.domain.reports import current_lines
 
 DP_SELECT = """SELECT line_id, sku_code, item_name, plan_category, city, platform, abc, sb_class, base::float AS base,
                reference_dp, final_dp, applied_factors, bridge, reason, confidence, flag_for_review, flags,
-               safety_stock, order_qty, case_size FROM core.dp_output WHERE run_id=%s ORDER BY line_id"""
+               safety_stock, order_qty, case_size, batch_key, sources_used, factors_off FROM core.dp_output WHERE run_id=%s ORDER BY line_id"""
 
 
 async def versions(cur: psycopg.AsyncCursor[Any], run_id: str) -> list[dict[str, Any]]:

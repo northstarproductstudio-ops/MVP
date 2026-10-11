@@ -105,3 +105,71 @@ def check_output(pack: dict[str, Any], raw: Any, cfg: Any) -> tuple[dict[str, di
         else:
             good[ln.line_id] = {"line": ln.model_dump(), "applied": resolved, "recomputed": recomputed}
     return good, failed
+
+
+# --------------------------------------------------------------------------- batches (prompt v2)
+
+def expand_batch_output(pack: dict[str, Any], raw: Any) -> tuple[dict[str, Any] | None, dict[str, list[str]]]:
+    """Turn a v2 batch answer into the v1 per-SKU shape the checks above expect.
+
+    Keeps only this pack's lines and expands category factors into each line's applied
+    factors: ``value: null`` takes the category value and reason; a line may override a
+    category factor only with its own reason. Returns (``{"lines": [...]}`` or None, failed).
+    """
+    from core.models.planning import BatchOutput
+
+    if isinstance(raw, dict) and "category_factors" not in raw and "lines" in raw:
+        raw = {**raw, "category_factors": []}  # tolerate a v1-shaped answer
+    try:
+        out = BatchOutput.model_validate(raw)
+    except ValidationError as exc:
+        return None, {"*": [f"schema: {exc.errors()[0]['msg']}"]}
+    failed: dict[str, list[str]] = {}
+    cat = {}
+    for cf in out.category_factors:
+        if not cf.name.startswith("agent:"):
+            failed.setdefault("*", []).append(f"category factor {cf.name} must be named agent:<short_name>")
+            continue
+        if not cf.reason.strip():
+            failed.setdefault("*", []).append(f"category factor {cf.name} has no reason")
+        cat[cf.name] = cf
+    mine = {ln["line_id"] for ln in pack["lines"]}
+    lines = []
+    for ln in out.lines:
+        if ln.line_id not in mine:
+            continue
+        errs: list[str] = []
+        applied = []
+        for a in ln.applied_factors:
+            cf = cat.get(a.name)
+            if a.value is None:
+                if cf is None:
+                    errs.append(f"{a.name} has no value and is not a category factor")
+                    continue
+                applied.append({"name": a.name, "value": cf.value, "reason": cf.reason})
+            else:
+                if cf is not None and abs(a.value - cf.value) > 1e-9 and not (a.reason or "").strip():
+                    errs.append(f"{a.name} overrides the category value without a reason")
+                reason = a.reason if (a.reason or "").strip() else (cf.reason if cf is not None else a.reason)
+                applied.append({"name": a.name, "value": float(a.value), "reason": reason})
+        if errs:
+            failed[ln.line_id] = errs
+        lines.append({"line_id": ln.line_id, "final_dp": ln.final_dp, "applied_factors": applied,
+                      "reason": ln.reason, "confidence": ln.confidence, "flag_for_review": ln.flag_for_review})
+    return {"lines": lines}, failed
+
+
+def check_batch_output(pack: dict[str, Any], raw: Any, cfg: Any
+                       ) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]]]:
+    """Expand a batch answer for one SKU pack, then run the per-line checks."""
+    expanded, failed = expand_batch_output(pack, raw)
+    if expanded is None:
+        return {}, failed
+    good, more = check_output(pack, expanded, cfg)
+    for lid, errs in more.items():
+        failed.setdefault(lid, []).extend(errs)
+    for lid in [k for k in failed if k != "*"]:
+        good.pop(lid, None)
+    if any("category factor" in e for e in failed.get("*", [])):
+        good = {}  # a bad category factor taints every line that could use it
+    return good, failed

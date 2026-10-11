@@ -36,6 +36,21 @@ class LookupResult:
     truncated: bool
     latency_ms: int
     label: str = LOOKUP_LABEL
+    # Gap 8: imported-data tables the query reads that hold no rows — the answer must say
+    # "no <file type> data has been imported", never "0".
+    empty_tables: list[str] | None = None
+
+
+DATA_TABLES = ("sellin_line", "po_line", "stock_snapshot", "market_daily")
+
+
+def referenced_tables(sql: str) -> set[str]:
+    try:
+        tree = sqlglot.parse_one(sql, read="duckdb")
+    except sqlglot.errors.ParseError:
+        return set()
+    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+    return {t.name.lower() for t in tree.find_all(exp.Table)} - ctes
 
 
 def validate_sql(sql: str, row_cap: int) -> str:
@@ -87,8 +102,15 @@ def run_fenced(con: duckdb.DuckDBPyConnection, sql: str, row_cap: int, timeout_s
         timer.cancel()
     truncated = len(df) > row_cap
     df = df.head(row_cap)
+    empty = []
+    for t in sorted(referenced_tables(sql) & set(DATA_TABLES)):
+        try:
+            if con.execute(f'SELECT 1 FROM "{t}" LIMIT 1').fetchone() is None:
+                empty.append(t)
+        except duckdb.Error:
+            empty.append(t)
     return LookupResult(rows=frame_records(df), row_count=len(df), sql=wrapped, truncated=truncated,
-                        latency_ms=int((time.monotonic() - started) * 1000))
+                        latency_ms=int((time.monotonic() - started) * 1000), empty_tables=empty or None)
 
 
 def frame_records(df: pd.DataFrame) -> list[dict[str, Any]]:

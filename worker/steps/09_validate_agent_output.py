@@ -10,7 +10,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from core.domain.agent_checks import check_output
+from core.domain.agent_checks import check_batch_output
+from core.domain.factor_sources import source_label
 from core.domain.plan_math import build_bridge
 from worker.context import RunContext
 from worker.steps import StepResult, step
@@ -27,11 +28,12 @@ def _reason_from_factors(base: float, applied: list[dict[str, Any]]) -> str:
 
 
 @step(name="validate_agent_output", no=9,
-      reads=["evidence_pack", "reference", "agent_raw", "classes", "base", "market_daily", "factors"],
+      reads=["evidence_pack", "reference", "agent_raw", "classes", "base", "market_daily", "factors",
+             "agent_batches"],
       writes=["plan_lines", "factor"],
       config_keys=["agent.enabled", "agent.factor_bounds", "agent.judgment_cap", "agent.arith_tolerance",
                    "agent.band", "agent.explain_threshold", "market.ceiling_ratio", "market.price_window_days"],
-      version="1.0")
+      version="2.0")
 def validate_agent_output(ctx: RunContext) -> StepResult:
     cfg = ctx.config
     ev = ctx.artifact("evidence_pack")
@@ -41,13 +43,19 @@ def validate_agent_output(ctx: RunContext) -> StepResult:
     base = ctx.artifact("base").set_index("line_id")
     agent_on = bool(cfg.get("agent.enabled")) and not raw.empty
     accepted: dict[str, dict[str, Any]] = {}
+    batch_of: dict[str, str] = {}
+    batches = ctx.artifact("agent_batches") if ctx.has_artifact("agent_batches") else pd.DataFrame()
+    for b in batches.itertuples():
+        for s in json.loads(b.sku_codes):
+            batch_of[s] = b.batch_key
     for r in ev.itertuples():
         pack = json.loads(r.pack_json)
         answers = raw[(raw["sku_code"] == r.sku_code) & raw["valid"] & raw["response_json"].notna()] \
             if agent_on else raw.iloc[0:0]
         for a in answers.itertuples():
             parsed = json.loads(a.response_json)
-            good, _ = check_output(pack, parsed, cfg)  # re-check deterministically
+            # expand category factors into each line, then re-check deterministically
+            good, _ = check_batch_output(pack, parsed, cfg)
             accepted.update(good)
 
     lines, agent_factor_rows = [], []
@@ -67,7 +75,9 @@ def validate_agent_output(ctx: RunContext) -> StepResult:
                                               "scope": json.dumps({"sku": rr["sku_code"], "city": rr["city"],
                                                                    "platform": rr["platform"]}, sort_keys=True),
                                               "derived_value": a["value"], "value": a["value"], "enabled": True,
-                                              "basis": a.get("reason"), "note": lid})
+                                              "basis": a.get("reason"), "note": lid,
+                                              "source_label": source_label(a["name"], "agent"),
+                                              "source_dataset_ids": []})
         else:
             applied = [{**f, "reason": None} for f in py]
             reason = _reason_from_factors(rr["base"], applied)
@@ -81,6 +91,7 @@ def validate_agent_output(ctx: RunContext) -> StepResult:
         lines.append({
             "line_id": lid, "sku_code": rr["sku_code"], "city": rr["city"], "platform": rr["platform"],
             "item_name": b["item_name"], "plan_category": b["plan_category"],
+            "batch_key": batch_of.get(rr["sku_code"]),
             "abc": classes["abc"].get(rr["sku_code"]), "sb_class": classes["sb_class"].get(rr["sku_code"]),
             "base": float(rr["base"]), "reference_dp": int(rr["reference_dp"]), "final_dp": int(final_dp),
             "applied_factors": json.dumps(applied, sort_keys=True), "bridge": json.dumps(bridge),
@@ -121,7 +132,7 @@ def validate_agent_output(ctx: RunContext) -> StepResult:
                 mask = (plan["sku_code"] == sku) & (plan["platform"] == plat)
                 plan.loc[mask, "flags"] = plan.loc[mask, "flags"].map(lambda f: sorted(set(f) | {"market_ceiling"}))
     af = pd.DataFrame(agent_factor_rows, columns=["name", "kind", "origin", "scope", "derived_value", "value",
-                                                  "enabled", "basis", "note"])
+                                                  "enabled", "basis", "note", "source_label", "source_dataset_ids"])
     total = int(plan["final_dp"].sum()) if len(plan) else 0
     return StepResult(
         rows_in=len(ref), rows_out=len(plan),

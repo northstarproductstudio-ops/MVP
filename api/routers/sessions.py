@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from api.deps import CurrentUser, plan_config, pool, settings, store
 from api.services.ask_agent import AskTurn
 from api.services.plans import load_plan
-from api.services.suggestions import candidate_facts, phrase
+from api.services.suggestions import candidate_facts, phrase, present_tables
 from api.services.workspace import open_workspace, snapshot_row
 from api.sse import sse_response
 from core.db import tenant_transaction
@@ -54,8 +54,8 @@ async def get_session(session_id: str, user: CurrentUser) -> dict[str, Any]:
         if not s:
             raise HTTPException(404, "chat not found")
         await cur.execute("""SELECT id::text, file_name, file_size, file_type, type_score, type_source, status,
-                             rows_read, warnings, progress, error, created_at FROM raw.dataset
-                             WHERE session_id=%s ORDER BY created_at""", (session_id,))
+                             rows_read, warnings, progress, error, created_at, data_from, data_to FROM raw.dataset
+                             WHERE session_id=%s AND status <> 'removed' ORDER BY created_at""", (session_id,))
         datasets = [dict(r) for r in await cur.fetchall()]
         await cur.execute("SELECT id::text, role, content, evidence, tool_calls, created_at FROM core.chat_message "
                           "WHERE session_id=%s AND role <> 'tool' ORDER BY created_at", (session_id,))
@@ -99,11 +99,12 @@ async def suggestions(session_id: str, user: CurrentUser) -> dict[str, Any]:
     try:
         facts = candidate_facts(ws.con, lines is not None, cfg.get("suggest.move_pct"), cfg.get("suggest.osa_alert"),
                                 cfg.get("fill.threshold"))
+        has_sales = "sellin_line" in present_tables(ws.con)
     finally:
         ws.con.close()
     s = settings()
     llm = LLMClient(api_key=s.openrouter_api_key.get_secret_value(), model=s.llm_model,
-                    base_url=s.openrouter_base_url, timeout_s=20)
+                    fallback_model=s.llm_fallback_model, base_url=s.openrouter_base_url, timeout_s=20)
     out = await asyncio.to_thread(phrase, llm, facts, lines is not None, int(cfg.get("suggest.max_questions")),
-                                  session_id, user.company_id)
+                                  session_id, user.company_id, has_sales, cfg.get("ask.prompt_version", "v1"))
     return {**out, "has_data": True, "workspace": ws.summary}

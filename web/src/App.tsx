@@ -4,14 +4,18 @@ import { api, type Json } from "./api";
 import { getToken, signIn, signOut, supabase, usesDevToken } from "./auth";
 import { StepHeader, type Stage } from "./components/common";
 import { AskScreen } from "./screens/AskScreen";
+import { DataScreen } from "./screens/DataScreen";
 import { ImportScreen } from "./screens/ImportScreen";
 import { MappingScreen } from "./screens/MappingScreen";
 import { SavedScreen } from "./screens/SavedScreen";
 
-function useHashRoute(): [string | null, Stage, (sid: string, st: Stage) => void] {
+type Route = Stage | "data";
+const RETURN_KEY = "dp.returnToData";
+
+function useHashRoute(): [string | null, Route, string | null, (sid: string, st: Route, suggest?: string) => void] {
   const parse = () => {
-    const m = window.location.hash.match(/^#\/s\/([0-9a-f-]+)\/(import|map|ask)/);
-    return m ? [m[1], m[2] as Stage] as const : [null, "import" as Stage] as const;
+    const m = window.location.hash.match(/^#\/s\/([0-9a-f-]+)\/(import|map|ask|data)(?:\?g=([a-z_]+))?/);
+    return m ? [m[1], m[2] as Route, m[3] ?? null] as const : [null, "import" as Route, null] as const;
   };
   const [state, setState] = useState(parse());
   useEffect(() => {
@@ -19,7 +23,7 @@ function useHashRoute(): [string | null, Stage, (sid: string, st: Stage) => void
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
-  return [state[0], state[1], (sid, st) => { window.location.hash = `#/s/${sid}/${st}`; }];
+  return [state[0], state[1], state[2], (sid, st, g) => { window.location.hash = `#/s/${sid}/${st}${g ? `?g=${g}` : ""}`; }];
 }
 
 export default function App() {
@@ -51,7 +55,7 @@ function Login({ onDone }: { onDone: () => void }) {
 }
 
 function Workspace() {
-  const [sid, stage, go] = useHashRoute();
+  const [sid, stage, suggest, go] = useHashRoute();
   const [session, setSession] = useState<Json | null>(null);
   const [summaries, setSummaries] = useState<Json[] | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -84,8 +88,9 @@ function Workspace() {
     <div className="app">
       <header className="topbar">
         <div className="brand">Demand Planning<small>{session.title}</small></div>
-        <StepHeader stage={stage} onGo={(s) => go(sid, s)} />
+        <StepHeader stage={stage === "data" ? "ask" : stage} onGo={(s) => go(sid, s)} />
         <div className="row">
+          <button className={`btn small ${stage === "data" ? "" : "ghost"}`} onClick={() => go(sid, "data")}>Data</button>
           <button className="btn ghost small" onClick={async () => { const s = await api.createSession("Demand planning"); go(s.id, "import"); }}>New chat</button>
           {!usesDevToken && <button className="btn ghost small" onClick={() => signOut().then(() => location.reload())}>Sign out</button>}
         </div>
@@ -93,11 +98,20 @@ function Workspace() {
       <main className="page">
         {stage === "import" && <ImportScreen sessionId={sid} datasets={datasets} onProcessed={() => { refresh(); go(sid, "map"); }} />}
         {stage === "map" && (summaries
-          ? <SavedScreen summaries={summaries} datasets={datasets} onBack={() => setSummaries(null)}
-              onAsk={() => go(sid, "ask")}
+          ? <SavedScreen sessionId={sid} summaries={summaries} datasets={datasets} onBack={() => setSummaries(null)}
+              onAsk={() => go(sid, "ask")} onData={() => go(sid, "data")}
               onRunPipeline={() => { setPending("Create a demand plan for next month"); go(sid, "ask"); }} />
-          : <MappingScreen datasets={datasets} onSaved={(s) => { setSummaries(s); refresh(); }} />)}
-        {stage === "ask" && <AskScreen session={session} pendingQuestion={pending} onConsumed={() => setPending(null)} />}
+          : <MappingScreen sessionId={sid} datasets={datasets} onSaved={(s) => {
+              refresh();
+              // "Add files" from the Data screen returns there after the mapping is saved
+              if (sessionStorage.getItem(RETURN_KEY) === sid) { sessionStorage.removeItem(RETURN_KEY); go(sid, "data"); }
+              else setSummaries(s);
+            }} />)}
+        {stage === "ask" && <AskScreen session={session} pendingQuestion={pending} onConsumed={() => setPending(null)}
+          onAddFile={(g) => go(sid, "data", g)} />}
+        {stage === "data" && <DataScreen sessionId={sid} suggest={suggest}
+          onAddFiles={() => { sessionStorage.setItem(RETURN_KEY, sid); go(sid, "import"); }}
+          onMap={() => { setSummaries(null); go(sid, "map"); }} onAsk={() => go(sid, "ask")} />}
       </main>
     </div>
   );

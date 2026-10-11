@@ -16,7 +16,7 @@ export function ImportScreen({ sessionId, datasets, onProcessed }: {
   const [error, setError] = useState<string | null>(null);
   const [tracking, setTracking] = useState<Json[]>([]);
   const input = useRef<HTMLInputElement>(null);
-  const existing = datasets.filter((d) => !["failed", "duplicate"].includes(d.status)).length;
+  const existing = datasets.filter((d) => !["failed", "duplicate", "removed"].includes(d.status)).length;
   const room = MAX - existing - files.length;
 
   const add = (list: FileList | null) => {

@@ -13,12 +13,23 @@ import pandas as pd
 import psycopg
 from psycopg.types.json import Jsonb
 
-from core.domain.variables import hard_variables
+from api.services.readiness import session_readiness
+from core.domain.variables import display_name
 from worker.steps import SECTIONS, steps_manifest
 
 
 class PreconditionError(ValueError):
-    pass
+    """A plan cannot start. ``code`` and ``items`` let the Ask agent explain what is missing
+    (Gap 7): no_sales_file, sales_fields_unmapped, no_sales_history, scope_has_no_history,
+    run_in_progress, bad_target, no_config."""
+
+    def __init__(self, message: str, code: str = "precondition", items: list[str] | None = None):
+        super().__init__(message)
+        self.code = code
+        self.items = items or []
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"error_code": self.code, "message": str(self), "items": self.items}
 
 
 MONTHS = {m.lower(): i for i, m in enumerate(
@@ -43,7 +54,7 @@ def parse_target(text: str | None, as_of: date) -> date:
         yr = as_of.year + (1 if mon <= as_of.month else 0)
         t = date(yr, mon, 1)
     if t <= as_of.replace(day=1):
-        raise PreconditionError(f"{t:%B %Y} is not after the data's last month ({as_of:%B %Y}).")
+        raise PreconditionError(f"{t:%B %Y} is not after the data's last month ({as_of:%B %Y}).", code="bad_target")
     return t
 
 
@@ -67,46 +78,111 @@ async def _config_version(cur: psycopg.AsyncCursor[Any], company_id: str) -> tup
                       "ORDER BY (company_id IS NULL), created_at DESC LIMIT 1", (company_id,))
     r = await cur.fetchone()
     if not r:
-        raise PreconditionError("No business configuration has been seeded; run scripts/seed.py.")
+        raise PreconditionError("No business configuration has been seeded; run scripts/seed.py.", code="no_config")
     return r["id"], r["config"]
 
 
-async def preconditions(cur: psycopg.AsyncCursor[Any], session_id: str) -> date:
-    await cur.execute("SELECT id::text, file_type, mapping_version_id::text AS mv FROM raw.dataset "
-                      "WHERE session_id=%s AND status='ready'", (session_id,))
-    ready = await cur.fetchall()
-    sales = [r for r in ready if r["file_type"] == "erp_sales_orders"]
-    if not sales:
-        raise PreconditionError("A plan needs at least one ready sales-order file (Zoho). Import and map one first.")
-    await cur.execute("SELECT DISTINCT variable FROM core.field_mapping WHERE version_id = ANY(%s::uuid[]) "
-                      "AND state IN ('confirmed','recognised','proposed','new_category','custom')",
-                      ([r["mv"] for r in sales if r["mv"]],))
-    mapped = {r["variable"] for r in await cur.fetchall()}
-    missing = [v for v in hard_variables("sellin") if v not in mapped]
-    if missing:
-        raise PreconditionError("These required fields are not mapped: " + ", ".join(missing))
+def history_window(as_of: date, months: int) -> tuple[date, date]:
+    """First day of M_n … as_of, where M1 is the last complete month at as_of (as RunContext.m1)."""
+    ts = pd.Timestamp(as_of)
+    m1 = ts.to_period("M").start_time
+    if (ts + pd.Timedelta(days=1)).month == ts.month:  # as_of is not a month end: M1 is the month before
+        m1 = (m1 - pd.offsets.MonthBegin(1))
+    start = (m1 - pd.DateOffset(months=months - 1)).date()
+    return start, as_of
+
+
+async def preconditions(cur: psycopg.AsyncCursor[Any], session_id: str, cfg: dict[str, Any] | None = None,
+                        scope: dict[str, Any] | None = None) -> date:
+    """Checks, in order, before a run is inserted (Gap 7). Uses the same readiness rule as
+    GET /sessions/{id}/readiness, so the screen and the run never disagree. ``scope`` may be
+    narrowed in place: a category scope is resolved to its SKUs."""
+    cfg = cfg or {}
+    ready = await session_readiness(cur, session_id)
+    if ready.code == "no_sales_file":
+        raise PreconditionError("A plan needs at least one ready sales-order file (Zoho). Import and map one first.",
+                                code="no_sales_file")
+    if ready.code == "sales_fields_unmapped":
+        names = [display_name(v) for v in ready.blocking]
+        raise PreconditionError("These required fields are not mapped: " + ", ".join(names),
+                                code="sales_fields_unmapped", items=names)
     await cur.execute("SELECT 1 FROM meta.workflow_run WHERE session_id=%s AND status IN ('queued','running')",
                       (session_id,))
     if await cur.fetchone():
-        raise PreconditionError("A plan is already running in this chat; wait for it to finish.")
+        raise PreconditionError("A plan is already running in this chat; wait for it to finish.",
+                                code="run_in_progress")
     await cur.execute("SELECT max(order_date) AS d FROM core.sellin_line s JOIN raw.dataset d ON d.id = s.dataset_id "
                       "WHERE d.session_id=%s AND d.status='ready'", (session_id,))
     r = await cur.fetchone()
     if not r or not r["d"]:
-        raise PreconditionError("The sales-order data has no dates.")
-    return r["d"]
+        raise PreconditionError("The sales-order file has no usable orders.", code="no_sales_history")
+    as_of = r["d"]
+    hist = cfg.get("history") or {}
+    statuses = list(hist.get("sellin_statuses") or ["invoiced", "confirmed"])
+    start, end = history_window(as_of, int(hist.get("months") or 3))
+    await cur.execute(
+        """SELECT DISTINCT s.sku_code FROM core.sellin_line s JOIN raw.dataset d ON d.id = s.dataset_id
+           WHERE d.session_id=%s AND d.status='ready' AND s.status = ANY(%s) AND NOT s.is_internal
+             AND s.order_date BETWEEN %s AND %s AND s.sku_code IS NOT NULL
+             AND coalesce(s.qty_invoiced + coalesce(s.qty_cancelled, 0), s.qty_ordered, 0) > 0""",
+        (session_id, statuses, start, end))
+    with_history = {x["sku_code"] for x in await cur.fetchall()}
+    if not with_history:
+        raise PreconditionError("The sales-order file has no usable orders (invoiced or confirmed, not internal, "
+                                "quantity above 0) in the history window.", code="no_sales_history")
+    if scope:
+        await _check_scope(cur, scope, with_history)
+    return as_of
+
+
+async def _check_scope(cur: psycopg.AsyncCursor[Any], scope: dict[str, Any], with_history: set[str]) -> None:
+    skus = [str(s) for s in (scope.get("skus") or [])]
+    cats = [str(c) for c in (scope.get("categories") or scope.get("plan_categories") or [])]
+    if cats:
+        from core.config import REPO_ROOT
+        from core.domain.categories import template_categories
+
+        tmpl = template_categories(REPO_ROOT / "templates" / "formatRef.xlsx")
+        await cur.execute("SELECT sku_code, plan_category FROM core.sku_master WHERE plan_category IS NOT NULL")
+        sm = {r["sku_code"]: r["plan_category"] for r in await cur.fetchall()}
+        wanted = {c.lower() for c in cats}
+        in_cat = sorted(s for s in set(tmpl) | set(sm) | with_history
+                        if (sm.get(s) or tmpl.get(s) or "").lower() in wanted)
+        if not in_cat:
+            raise PreconditionError(f"No SKUs found in {', '.join(cats)}.", code="scope_has_no_history", items=cats)
+        skus = sorted(set(skus) | set(in_cat))
+        scope.pop("categories", None)
+        scope.pop("plan_categories", None)
+        scope["skus"] = skus
+    if skus and not (set(skus) & with_history):
+        names = await _sku_names(cur, skus)
+        raise PreconditionError("There's no sales history for " + ", ".join(names[:10])
+                                + (f" and {len(names) - 10} more" if len(names) > 10 else "")
+                                + ", so they can't be planned.", code="scope_has_no_history", items=names)
+
+
+async def _sku_names(cur: psycopg.AsyncCursor[Any], skus: list[str]) -> list[str]:
+    await cur.execute("SELECT DISTINCT ON (sku_code) sku_code, item_name FROM core.sellin_line WHERE sku_code = ANY(%s) "
+                      "AND item_name IS NOT NULL", (skus,))
+    names = {r["sku_code"]: r["item_name"] for r in await cur.fetchall()}
+    await cur.execute("SELECT sku_code, item_name FROM core.sku_master WHERE sku_code = ANY(%s) AND item_name IS NOT NULL",
+                      (skus,))
+    for r in await cur.fetchall():
+        names.setdefault(r["sku_code"], r["item_name"])
+    return [names.get(s) or s for s in skus]
 
 
 async def enqueue_run(cur: psycopg.AsyncCursor[Any], company_id: str, session_id: str, target: str | None,
                       scope: dict[str, Any] | None, trigger: str, requested_by: str | None,
                       retry_of: str | None = None, as_of_override: date | None = None,
                       model: str | None = None) -> dict[str, Any]:
-    as_of = await preconditions(cur, session_id)
+    cv, cfg = await _config_version(cur, company_id)
+    scope = dict(scope or {})
+    as_of = await preconditions(cur, session_id, cfg, scope)
     if as_of_override:
         as_of = as_of_override
     target_month = parse_target(target, as_of)
     wf = await _workflow_version(cur, company_id)
-    cv, cfg = await _config_version(cur, company_id)
     await cur.execute(
         """INSERT INTO meta.workflow_run (company_id, session_id, workflow_version_id, config_version_id,
            prompt_version, model, target_month, scope, "trigger", retry_of, requested_by, as_of)
@@ -180,4 +256,6 @@ def report_card(run: dict[str, Any], version: dict[str, Any] | None) -> dict[str
         "review": rep.get("review"), "warnings": run.get("warnings") or [],
         "overview": (version or {}).get("overview_text") or rep.get("overview"),
         "order_total": rep.get("order_total"),
+        "not_planned": rep.get("not_planned") or [],  # "Not planned: no sales history"
+        "sources": rep.get("sources") or {},
     }

@@ -4,17 +4,37 @@ optional filters are composed from fixed SQL fragments."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
 import duckdb
 import pandas as pd
 
+from core.domain.factor_sources import source_label, with_sources
 from core.domain.fenced import frame_records
 
 
 class QueryParamError(ValueError):
     pass
+
+
+class SourceMissing(LookupError):
+    """The query reads a file type that has not been imported (Gap 8): never answer 0."""
+
+    def __init__(self, table: str):
+        self.table = table
+        self.file_group = {"sellin_line": "sellin", "po_line": "po", "stock_snapshot": "stock",
+                           "market_daily": "market"}.get(table, table)
+        super().__init__(f"no {FILE_LABELS.get(self.file_group, table)} data has been imported")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"error_code": "source_missing", "file_type": self.file_group,
+                "file_label": FILE_LABELS.get(self.file_group, self.table), "message": str(self)}
+
+
+FILE_LABELS = {"sellin": "sales-order (Zoho)", "po": "platform purchase-order", "stock": "platform stock (Blinkit DOH)",
+               "market": "market (Dcluttr)"}
 
 
 @dataclass
@@ -138,7 +158,16 @@ def line_reasoning(con: duckdb.DuckDBPyConnection, p: dict[str, Any]) -> QueryRe
               final_dp, applied_factors, bridge, reason, confidence, flags, user_change
               FROM plan_lines WHERE {filt} ORDER BY final_dp DESC LIMIT 50"""
     df = con.execute(sql, params).df()
-    return QueryResult("line_reasoning", frame_records(df), len(df),
+    rows = frame_records(df)
+    for r in rows:  # Gap 8b: every factor carries the name of the data it came from
+        try:
+            applied = json.loads(r["applied_factors"]) if isinstance(r.get("applied_factors"), str) \
+                else list(r.get("applied_factors") or [])
+        except (TypeError, ValueError):
+            applied = []
+        r["applied_factors"] = with_sources(applied)
+        r["base_source"] = source_label("base")
+    return QueryResult("line_reasoning", rows, len(df),
                        "From the demand plan, step 9", section="Building the plan")
 
 
@@ -223,7 +252,23 @@ QUERIES = {
 }
 
 
+def source_table(name: str, params: dict[str, Any]) -> str | None:
+    """The imported table a known query reads (None for plan-only queries)."""
+    if name == "top_movers":
+        return "market_daily" if (params.get("metric") or "sell-in") == "secondary" else "sellin_line"
+    return {"sales_history": "sellin_line", "stock_cover": "stock_snapshot", "fill_rate": "po_line",
+            "market_position": "market_daily", "open_pos": "po_line"}.get(name)
+
+
+def table_has_rows(con: duckdb.DuckDBPyConnection, table: str) -> bool:
+    tables = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+    return table in tables and con.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone() is not None
+
+
 def run_known(con: duckdb.DuckDBPyConnection, name: str, params: dict[str, Any]) -> QueryResult:
     if name not in QUERIES:
         raise QueryParamError(f"unknown query {name}; known: {', '.join(QUERIES)}")
+    table = source_table(name, params or {})
+    if table and not table_has_rows(con, table):
+        raise SourceMissing(table)
     return QUERIES[name][0](con, params or {})

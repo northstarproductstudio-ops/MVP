@@ -169,7 +169,16 @@ async def reasoning(run_id: str, user: CurrentUser, version: int | None = None,
                     page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=1000)) -> dict[str, Any]:
     lines, ver = await _lines(run_id, user, version)
     rows = reasoning_rows(lines, ver["version"])
-    return _page(rows, page, page_size, ver)
+    out = _page(rows, page, page_size, ver)
+    out["not_planned"] = await _not_planned(run_id, user)
+    return out
+
+
+async def _not_planned(run_id: str, user: Any) -> list[str]:
+    async with tenant_transaction(pool(), user.company_id) as cur:
+        await cur.execute("SELECT payload FROM core.report WHERE run_id=%s", (run_id,))
+        r = await cur.fetchone()
+    return list(((r or {}).get("payload") or {}).get("not_planned") or [])
 
 
 @router.get("/runs/{run_id}/versions")
@@ -228,7 +237,7 @@ async def export_reasoning(run_id: str, user: CurrentUser) -> Response:
     lines, ver = await _lines(run_id, user, None)
     tm = await _target(run_id, user)
     meta = {"target_month": f"{tm:%Y-%m-%d}", "version": ver["version"], "run_id": run_id}
-    data = export_reasoning_xlsx(reasoning_rows(lines, ver["version"]), meta)
+    data = export_reasoning_xlsx(reasoning_rows(lines, ver["version"]), meta, await _not_planned(run_id, user))
     return _xlsx(data, f"reasoning-{tm:%Y-%m}-v{ver['version']}.xlsx")
 
 

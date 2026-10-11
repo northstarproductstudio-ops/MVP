@@ -44,12 +44,13 @@ def seed_global(conn: psycopg.Connection) -> None:
             for v in csv.DictReader(fh):
                 conn.execute(
                     """INSERT INTO core.variable (company_id, name, category, data_type, unit, tier, level, definition,
-                       origin) VALUES (NULL,%s,%s,%s,%s,%s,%s,%s,'seed')
+                       display_name, help, origin) VALUES (NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,'seed')
                        ON CONFLICT (coalesce(company_id, '00000000-0000-0000-0000-000000000000'::uuid), name)
                        DO UPDATE SET category=excluded.category, data_type=excluded.data_type, unit=excluded.unit,
-                       tier=excluded.tier, level=excluded.level, definition=excluded.definition""",
+                       tier=excluded.tier, level=excluded.level, definition=excluded.definition,
+                       display_name=excluded.display_name, help=excluded.help""",
                     (v["name"], v["category"], v["data_type"], v["unit"] or None, int(v["tier"]), v["level"],
-                     v["definition"]))
+                     v["definition"], v["display_name"], v["help"] or None))
         from worker.steps import steps_manifest
 
         sha = os.environ.get("GIT_SHA", "dev")

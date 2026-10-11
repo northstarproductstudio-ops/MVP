@@ -23,11 +23,12 @@ JSON_COLS = {
 # Durable-write discriminators: delete-then-insert by run_id plus these columns.
 DISCRIMINATOR = {"factor": "origin", "variable_value": "name"}
 DURABLE_COLUMNS = {
-    "factor": ["name", "kind", "origin", "scope", "derived_value", "value", "enabled", "basis", "note"],
+    "factor": ["name", "kind", "origin", "scope", "derived_value", "value", "enabled", "basis", "note",
+               "source_label", "source_dataset_ids"],
     "variable_value": ["line_id", "name", "value_num", "value_text"],
     "dp_output": ["line_id", "sku_code", "item_name", "plan_category", "city", "platform", "abc", "sb_class",
                   "base", "reference_dp", "final_dp", "applied_factors", "bridge", "reason", "confidence",
-                  "flag_for_review", "flags", "safety_stock", "order_qty", "case_size"],
+                  "flag_for_review", "flags", "safety_stock", "order_qty", "case_size", "batch_key", "sources_used", "factors_off"],
     "report": ["payload"],
     "report_version": ["version", "parent_version_id", "edit", "note", "overview_text", "created_by",
                        "is_current"],
