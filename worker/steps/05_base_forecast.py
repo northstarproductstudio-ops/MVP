@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from core.domain.categories import plan_category_map
+from core.domain.categories import UNCATEGORISED, resolve_plan_categories
 from worker.context import RunContext, line_id
 from worker.steps import StepResult, step
 
@@ -37,10 +37,11 @@ def croston_sba(series: np.ndarray, alpha: float = 0.1) -> float:
 
 
 @step(name="base_forecast", no=5,
-      reads=["history", "weekly", "classes", "sku_master"], writes=["base", "variable_value"],
+      reads=["history", "weekly", "classes", "sku_master", "sellin_line", "po_line", "market_daily",
+             "extra_value"], writes=["base", "variable_value"],
       config_keys=["base.method", "base.weights", "base.method_intermittent", "base.croston_alpha",
                    "split.min_units", "history.months", "plan.cities"],
-      version="1.0")
+      version="1.1")
 def base_forecast(ctx: RunContext) -> StepResult:
     cfg = ctx.config
     hist = ctx.artifact("history")
@@ -81,7 +82,11 @@ def base_forecast(ctx: RunContext) -> StepResult:
 
     # City shares
     skus = sorted(set(h["sku_code"]))
-    cats = plan_category_map(skus, ctx.table("sku_master"), ctx.template_path)
+    resolved = resolve_plan_categories(
+        skus, {t: ctx.table(t) for t in ("sku_master", "sellin_line", "po_line", "market_daily", "extra_value")
+               if t in ctx.tables}, ctx.template_path)
+    cats = {r.sku_code: (r.plan_category or UNCATEGORISED) for r in resolved.itertuples()}
+    cat_src = dict(zip(resolved["sku_code"], resolved["category_source"], strict=False))
     h["plan_category"] = h["sku_code"].map(cats)
     city_w = h.groupby(["sku_code", "platform", "city"])["wq"].sum().reset_index()
     cat_city = h.groupby(["plan_category", "platform", "city"])["wq"].sum()
@@ -111,6 +116,7 @@ def base_forecast(ctx: RunContext) -> StepResult:
                 continue
             out.append({"line_id": line_id(r.sku_code, city, r.platform), "sku_code": r.sku_code,
                         "city": city, "platform": r.platform, "plan_category": cat,
+                        "category_source": cat_src.get(r.sku_code, "none"),
                         "B_np": r.B_np, "base_method": r.base_method, "share": sh,
                         "share_basis": basis, "base": r.B_np * sh})
     base = pd.DataFrame(out)

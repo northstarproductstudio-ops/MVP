@@ -2,18 +2,24 @@
 import { useEffect, useState } from "react";
 import { api, download, type Json } from "../api";
 import { Chip, fmt } from "../components/common";
+import { ReadinessPanel, useReadiness } from "../components/ReadinessPanel";
 
-export function SavedScreen({ summaries, datasets, onAsk, onRunPipeline, onBack }: {
+export function SavedScreen({ sessionId, summaries, datasets, onAsk, onRunPipeline, onBack, onData }: {
+  sessionId: string;
   summaries: Json[];
   datasets: Json[];
   onAsk: () => void;
   onRunPipeline: () => void;
   onBack: () => void;
+  onData: () => void;
 }) {
   const [cw, setCw] = useState<Json | null>(null);
   const [busy, setBusy] = useState(false);
   const ready = datasets.filter((d) => d.status === "ready").length;
   const pending = datasets.filter((d) => d.status === "mapped").length;
+  // refreshes after every save and whenever a file is added, removed or finishes storing
+  const [readiness] = useReadiness(sessionId, datasets.map((d) => d.id + d.status));
+  const planReady = Boolean(readiness?.plan_ready);
 
   const loadCw = () => api.crosswalk("review").then(setCw).catch(() => setCw(null));
   useEffect(() => {
@@ -27,7 +33,7 @@ export function SavedScreen({ summaries, datasets, onAsk, onRunPipeline, onBack 
   const byCat = new Map<string, Set<string>>();
   summaries.forEach((s) => s.available.forEach((a: Json) => {
     const set = byCat.get(a.category) ?? new Set();
-    a.variables.forEach((v: string) => set.add(v));
+    (a.display_names ?? a.variables).forEach((v: string) => set.add(v));
     byCat.set(a.category, set);
   }));
   const warnings = datasets.flatMap((d) => (d.warnings ?? []).map((w: string) => `${d.file_name}: ${w}`));
@@ -98,12 +104,23 @@ export function SavedScreen({ summaries, datasets, onAsk, onRunPipeline, onBack 
           </div>
         </div>
       )}
+      <ReadinessPanel readiness={readiness} compact />
       <div className="card pad">
-        <div className="row between">
-          <div><h2>Ready to ask</h2><p className="muted" style={{ margin: "4px 0 0" }}>Ask about the stored data, or ask for a demand plan.</p></div>
+        <div className="row between wrap">
+          <div><h2>Ready to ask</h2><p className="muted" style={{ margin: "4px 0 0" }}>Ask about the stored data, or ask for a demand plan.</p>
+            {!planReady && readiness && (
+              <p className="muted" style={{ margin: "6px 0 0", color: "var(--warn)" }}>
+                {readiness.code === "no_sales_file"
+                  ? "A demand plan needs a ready Zoho sales-order file."
+                  : `A demand plan needs: ${(readiness.blocking_display ?? []).join(", ")}.`}
+              </p>
+            )}
+          </div>
           <div className="row">
             <button className="btn ghost" onClick={onBack}>Back to mapping</button>
-            <button className="btn" onClick={onRunPipeline} disabled={!ready}>Run the pipeline</button>
+            <button className="btn ghost" onClick={onData}>Data</button>
+            <button className="btn" onClick={onRunPipeline} disabled={!planReady}
+              title={planReady ? "" : "Map the required sales-order fields first"}>Run the pipeline</button>
             <button className="btn primary" onClick={onAsk} disabled={!ready}>Go to Ask</button>
           </div>
         </div>

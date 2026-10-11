@@ -66,9 +66,11 @@ city_map:
 
 agent:
   enabled: true             # false for the November plan
-  prompt_version: v1
+  prompt_version: v2        # v2 = one call per category batch (Gaps 3–5)
   temperature: 0
-  max_lines_per_call: 40
+  batch_by: category        # category | sku (sku = one call per SKU, the old behaviour); assumed
+  max_lines_per_call: 120   # was 40; assumed, lower it if JSON validity drops below 95%
+  uncategorised_batches: 6  # assumed
   parallel_calls: 5
   timeout_s: 60
   factor_bounds: [-0.30, 0.50]   # assumed, per agent factor
@@ -90,6 +92,7 @@ edits:
   pct_max: 300
 
 ask:
+  prompt_version: v2        # v2: explains missing files and precondition errors, names sources (Gaps 7, 8, 8b)
   row_cap: 500
   timeout_s: 5
   history_messages: 20
@@ -103,6 +106,9 @@ suggest:
 
 step:
   timeout_s: 120
+
+data:
+  removed_retention_days: 30   # Gap 12: raw files of removed datasets are deleted after this many days
 
 import:
   detect_accept: 0.8

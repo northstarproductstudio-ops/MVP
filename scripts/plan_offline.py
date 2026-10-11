@@ -62,7 +62,8 @@ def main() -> int:
     if args.agent:
         from core.llm import LLMClient
 
-        llm = LLMClient(api_key=os.environ["OPENROUTER_API_KEY"], model=os.environ["LLM_MODEL"])
+        llm = LLMClient(api_key=os.environ["OPENROUTER_API_KEY"], model=os.environ["LLM_MODEL"],
+                        fallback_model=os.environ.get("LLM_FALLBACK_MODEL") or None)
     args.out.mkdir(parents=True, exist_ok=True)
     cwd = snap.tables["sku_crosswalk"]
     cwd.assign(confirm=cwd["match_method"].isin(["ean", "auto", "manual"])).to_excel(

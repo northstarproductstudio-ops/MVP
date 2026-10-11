@@ -61,7 +61,10 @@ def _uuid_or_none(v: Any) -> Any:
 
 
 def replay_source(conn: psycopg.Connection, run_id: str) -> Callable[[str, int, int], dict[str, Any] | None]:
-    """Stored planning responses of this run, keyed by (sku, attempt)."""
+    """Stored planning responses of this run, keyed by (batch_key, attempt).
+
+    ``agent_call.sku_code`` holds the batch key since prompt v2 (Gaps 3–5). With a fallback
+    model a failed attempt has no response and is skipped, so the answer that was used wins."""
     rows = conn.execute(
         "SELECT sku_code, attempt, response FROM meta.agent_call WHERE run_id=%s AND role='planning' "
         "AND response IS NOT NULL ORDER BY created_at", (run_id,)).fetchall()
@@ -140,6 +143,7 @@ class DbRunner:
             as_of = pd.Timestamp(run["as_of"] or as_of)
             llm = LLMClient(api_key=self.settings.openrouter_api_key.get_secret_value(),
                             model=run["model"] or self.settings.llm_model,
+                            fallback_model=self.settings.llm_fallback_model,
                             base_url=self.settings.openrouter_base_url,
                             timeout_s=float(cfg.get("agent.timeout_s")),
                             recorder=agent_recorder(self.pool, company_id))

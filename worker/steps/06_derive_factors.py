@@ -11,6 +11,7 @@ import json
 import numpy as np
 import pandas as pd
 
+from core.domain.factor_sources import FACTOR_GROUPS, dataset_ids, source_label
 from worker.context import RunContext
 from worker.steps import StepResult, step
 
@@ -34,13 +35,14 @@ def market_value(md: pd.DataFrame) -> pd.Series:
 
 
 @step(name="derive_factors", no=6,
-      reads=["history", "classes", "base", "oos", "inputs", "po_line", "stock_snapshot", "market_daily"],
+      reads=["history", "classes", "base", "oos", "inputs", "po_line", "stock_snapshot", "market_daily",
+             "sellin_line"],
       writes=["factors", "signals", "factor", "variable_value"],
       config_keys=["trend.cap", "sellthrough.cap", "sellthrough.osa_floor", "fill.lookback_days",
                    "fill.threshold", "fill.cap", "stock.target_doh", "stock.stale_days",
                    "plan.quick_commerce", "market.price_window_days", "history.months",
                    "base.weights"],
-      version="1.0")
+      version="1.1")
 def derive_factors(ctx: RunContext) -> StepResult:
     cfg = ctx.config
     hist = ctx.artifact("history")
@@ -212,6 +214,11 @@ def derive_factors(ctx: RunContext) -> StepResult:
                          "flags": json.dumps(sorted(set(fl)))})
     signals = pd.DataFrame(sig_rows, columns=["line_id", "signals", "flags"])
     fdf = pd.DataFrame(factors, columns=FACTOR_COLS)
+    # Gap 8b: every factor row names the data it came from
+    tables = {t: ctx.table(t) for t in ("sellin_line", "po_line", "stock_snapshot", "market_daily")}
+    src_ids = {n: _uuids(dataset_ids(tables, FACTOR_GROUPS.get(n, ("sellin",)))) for n in fdf["name"].unique()}
+    fdf["source_label"] = fdf["name"].map(source_label)
+    fdf["source_dataset_ids"] = fdf["name"].map(lambda n: src_ids.get(n, []))
     vv = [{"line_id": s["line_id"], "name": f"signal:{k}", "value_num": v if isinstance(v, (int, float)) else None,
            "value_text": None if isinstance(v, (int, float)) else str(v)}
           for s in sig_rows for k, v in json.loads(s["signals"]).items()]
@@ -224,6 +231,18 @@ def derive_factors(ctx: RunContext) -> StepResult:
         artifacts={"factors": fdf, "signals": signals},
         writes={"factor": fdf.drop(columns=["sku_code", "city", "platform"]),
                 "variable_value": pd.DataFrame(vv, columns=["line_id", "name", "value_num", "value_text"])})
+
+
+def _uuids(ids: list[str]) -> list[str]:
+    import uuid
+
+    out = []
+    for i in ids:
+        try:
+            out.append(str(uuid.UUID(str(i))))
+        except ValueError:
+            continue  # local runs key datasets by file name
+    return out
 
 
 def _r(x) -> float | None:

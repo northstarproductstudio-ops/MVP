@@ -99,3 +99,87 @@ AGENT_OUTPUT_JSON_SCHEMA: dict[str, Any] = {
         }
     },
 }
+
+
+# --------------------------------------------------------------------------- prompt v2 (batches)
+# One call per category batch (Gaps 3–5). Category-wide effects are declared once in
+# ``category_factors``; a line uses one by listing it in ``applied_factors`` with
+# ``value: null`` (take the category value), or overrides it with its own value and reason.
+
+class CategoryFactor(BaseModel):
+    name: str
+    value: float
+    reason: str
+
+
+class BatchAppliedFactor(BaseModel):
+    name: str
+    value: float | None = None
+    reason: str | None = None
+
+
+class BatchLine(BaseModel):
+    line_id: str
+    final_dp: float
+    applied_factors: list[BatchAppliedFactor]
+    reason: str
+    confidence: Literal["high", "medium", "low"]
+    flag_for_review: bool
+
+
+class BatchOutput(BaseModel):
+    category: str | None = None
+    category_factors: list[CategoryFactor] = Field(default_factory=list)
+    lines: list[BatchLine]
+
+
+AGENT_OUTPUT_JSON_SCHEMA_V2: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["category", "category_factors", "lines"],
+    "properties": {
+        "category": {"type": ["string", "null"]},
+        "category_factors": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["name", "value", "reason"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "value": {"type": "number"},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+        "lines": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["line_id", "final_dp", "applied_factors", "reason", "confidence",
+                             "flag_for_review"],
+                "properties": {
+                    "line_id": {"type": "string"},
+                    "final_dp": {"type": "number"},
+                    "applied_factors": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["name", "value", "reason"],
+                            "properties": {
+                                "name": {"type": "string"},
+                                "value": {"type": ["number", "null"]},
+                                "reason": {"type": ["string", "null"]},
+                            },
+                        },
+                    },
+                    "reason": {"type": "string"},
+                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "flag_for_review": {"type": "boolean"},
+                },
+            },
+        },
+    },
+}

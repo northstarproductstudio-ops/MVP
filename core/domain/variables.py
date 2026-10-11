@@ -17,9 +17,16 @@ class Variable:
     unit: str | None
     tier: int
     level: str  # hard | soft | key | none
-    file_group: str | None
+    file_group: str | None  # primary file group (first of a "|"-separated list)
     definition: str | None
     origin: str = "seed"
+    display_name: str = ""  # Gap 11: what planners see; ``name`` stays the stored mapping target
+    help: str | None = None
+    file_groups: tuple[str, ...] = ()  # every file group the variable may be mapped from
+
+    @property
+    def label(self) -> str:
+        return self.display_name or humanize(self.name)
 
 
 @lru_cache(maxsize=1)
@@ -27,12 +34,30 @@ def catalogue() -> dict[str, Variable]:
     out: dict[str, Variable] = {}
     with open(SEED_DIR / "variables.csv", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
+            groups = tuple(g.strip() for g in (row["file_group"] or "").split("|") if g.strip())
             out[row["name"]] = Variable(
                 name=row["name"], category=row["category"], data_type=row["data_type"],
                 unit=row["unit"] or None, tier=int(row["tier"]), level=row["level"],
-                file_group=row["file_group"] or None, definition=row["definition"] or None,
+                file_group=groups[0] if groups else None, definition=row["definition"] or None,
+                display_name=(row.get("display_name") or "").strip(), help=(row.get("help") or "").strip() or None,
+                file_groups=groups,
             )
     return out
+
+
+def humanize(name: str) -> str:
+    """Fallback display name for variables without one (e.g. agent-proposed tier-2 names)."""
+    words = name.replace("_", " ").strip()
+    return words[:1].upper() + words[1:] if words else name
+
+
+def display_name(name: str) -> str:
+    v = catalogue().get(name)
+    return v.label if v is not None else humanize(name)
+
+
+def display_names(names: list[str]) -> list[str]:
+    return [display_name(n) for n in names]
 
 
 def hard_variables(group: str = "sellin") -> list[str]:

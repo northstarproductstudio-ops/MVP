@@ -1,7 +1,8 @@
 """Test-only scripted stand-in for OpenRouter chat completions.
 
-* planning calls (response_format json_schema demand_plan_lines): apply every pack factor at
-  its value plus ``agent:diwali`` +10% on Home Baking / Cake Décor lines, with exact arithmetic
+* planning calls (response_format json_schema demand_plan_batch, prompt v2): declare
+  ``agent:diwali`` +10% once as a category factor on festive categories, apply every pack
+  factor at its value and use the category factor by name (value null), with exact arithmetic
 * import calls: mark every field not_stored
 * ask calls with tools: route by keywords to run_demand_plan / apply_edit / query_known, then
   answer with a short sentence once tool results are present
@@ -38,6 +39,20 @@ def plan_answer(pack: dict[str, Any]) -> dict[str, Any]:
                       "reason": "trend and agent:diwali as listed" if len(applied) > len(ln["factors"])
                       else "Python factors as derived", "confidence": "medium", "flag_for_review": False})
     return {"lines": lines}
+
+
+def batch_answer(batch: dict[str, Any]) -> dict[str, Any]:
+    festive = (batch.get("category") or "") in FESTIVE
+    cat_factors = [{"name": "agent:diwali", "value": 0.1,
+                    "reason": "Diwali in November lifts festive home-baking demand"}] if festive else []
+    lines = []
+    for pack in batch["skus"]:
+        for ln in plan_answer({**pack, "plan_category": batch.get("category")})["lines"]:
+            ln["applied_factors"] = [
+                {"name": f["name"], "value": None, "reason": None} if f["name"] == "agent:diwali" else f
+                for f in ln["applied_factors"]]
+            lines.append(ln)
+    return {"category": batch.get("category"), "category_factors": cat_factors, "lines": lines}
 
 
 def ask_answer(body: dict[str, Any]) -> dict[str, Any]:
@@ -86,7 +101,11 @@ class _H(BaseHTTPRequestHandler):
             return
         rf = body.get("response_format") or {}
         name = (rf.get("json_schema") or {}).get("name")
-        if name == "demand_plan_lines":
+        if name == "demand_plan_batch":
+            user = body["messages"][-1]["content"]
+            batch = json.loads(user.split("Category batch:\n", 1)[1].split("\n\n", 1)[0])
+            msg = {"content": json.dumps(batch_answer(batch))}
+        elif name == "demand_plan_lines":
             user = body["messages"][-1]["content"]
             pack = json.loads(user.split("Evidence pack:\n", 1)[1].split("\n\n", 1)[0])
             msg = {"content": json.dumps(plan_answer(pack))}

@@ -12,13 +12,15 @@ from typing import Any
 import pandas as pd
 
 from core.domain.categories import UNCATEGORISED, template_layout
+from core.domain.factor_sources import source_label
 from core.domain.plan_math import bridge_units
 
 REASONING_COLUMNS = [
     "line_id", "sku_code", "item_name", "plan_category", "city", "platform", "abc", "sb_class", "base",
     "trend_m", "trend_units", "sell_through_m", "sell_through_units", "fill_rate_m", "fill_rate_units",
     "stock_cover_units", "agent_factors", "judgment_m", "judgment_units", "reference_dp", "pipeline_dp",
-    "user_change", "final_dp", "order_qty", "reason", "confidence", "flags", "report_version",
+    "user_change", "final_dp", "order_qty", "reason", "confidence", "flags", "batch", "sources_used",
+    "factors_off", "report_version",
 ]
 
 
@@ -54,6 +56,11 @@ def current_lines(dp: pd.DataFrame, edits: pd.DataFrame | None) -> pd.DataFrame:
 
 # --------------------------------------------------------------------------- reasoning report
 
+def _opt(r: Any, col: str) -> Any:
+    v = getattr(r, col, None)
+    return None if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NA else v
+
+
 def reasoning_rows(lines: pd.DataFrame, version: int) -> pd.DataFrame:
     rows = []
     for r in lines.itertuples():
@@ -76,12 +83,16 @@ def reasoning_rows(lines: pd.DataFrame, version: int) -> pd.DataFrame:
             "reference_dp": r.reference_dp, "pipeline_dp": r.pipeline_dp, "user_change": r.user_change,
             "final_dp": int(r.final_dp), "order_qty": None if pd.isna(r.order_qty) else int(r.order_qty),
             "reason": r.reason, "confidence": r.confidence, "flags": ", ".join(flags) or None,
-            "report_version": version,
+            "batch": _opt(r, "batch_key"),
+            "sources_used": "; ".join(p for p in (_opt(r, "sources_used"),
+                                                 "Planner adjustment" if r.user_change else None) if p) or None,
+            "factors_off": _opt(r, "factors_off"), "report_version": version,
         })
     return pd.DataFrame(rows, columns=REASONING_COLUMNS)
 
 
-def export_reasoning_xlsx(rows: pd.DataFrame, meta: dict[str, Any]) -> bytes:
+def export_reasoning_xlsx(rows: pd.DataFrame, meta: dict[str, Any],
+                          not_planned: list[str] | None = None) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Font
     from openpyxl.utils import get_column_letter
@@ -99,6 +110,14 @@ def export_reasoning_xlsx(rows: pd.DataFrame, meta: dict[str, Any]) -> bytes:
     for i, col in enumerate(rows.columns, 1):
         ws.column_dimensions[get_column_letter(i)].width = min(40, max(10, len(col) + 2))
     ws.freeze_panes = "C3"
+    if not_planned:  # Gap 7: SKUs left out of the plan, never planned as 0
+        np_ws = wb.create_sheet("Not planned")
+        np_ws.append(["Not planned: no sales history"])
+        np_ws["A1"].font = Font(bold=True)
+        np_ws.append(["SKU"])
+        for s in not_planned:
+            np_ws.append([s])
+        np_ws.column_dimensions["A"].width = 40
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -184,13 +203,10 @@ def export_plan_xlsx(template: Path, lines: pd.DataFrame, actuals: pd.DataFrame,
     ws.append(["Factor", "Source", "Applied this run", "Scopes applied", "Min value", "Max value", "Basis example"])
     for c in ws[1]:
         c.font = bold
-    sources = {"trend": "Zoho sell-in", "sell_through": "Dcluttr secondary vs primary",
-               "fill_rate": "Platform POs", "stock_cover": "Blinkit DOH", "seasonal": "History index (12 m)",
-               "judgment": "Planning agent"}
     if not factors.empty:
         for name, g in factors.groupby("name", sort=True):
             enabled = g[g["enabled"]]
-            src = sources.get(name, "Planning agent" if name.startswith("agent:") else "")
+            src = source_label(name)  # Gap 8b: one registry for every source label
             ws.append([name, src, "yes" if len(enabled) else "no", int(len(enabled)),
                        float(enabled["value"].min()) if len(enabled) else None,
                        float(enabled["value"].max()) if len(enabled) else None,
@@ -205,7 +221,8 @@ def export_plan_xlsx(template: Path, lines: pd.DataFrame, actuals: pd.DataFrame,
 # --------------------------------------------------------------------------- overview
 
 def overview_facts(lines: pd.DataFrame, factors: pd.DataFrame, last_month_total: float,
-                   target_month: str, version: int, warnings: list[str]) -> dict[str, Any]:
+                   target_month: str, version: int, warnings: list[str],
+                   sources: dict[str, Any] | None = None) -> dict[str, Any]:
     flags = Counter(f for fl in lines["flags"] for f in (fl if isinstance(fl, (list, tuple)) else []))
     applied = Counter()
     agent_cats: dict[str, set[str]] = {}
@@ -228,7 +245,22 @@ def overview_facts(lines: pd.DataFrame, factors: pd.DataFrame, last_month_total:
         "flags": dict(flags), "review": int(lines["flag_for_review"].sum()) if "flag_for_review" in lines else 0,
         "warnings": warnings[:6],
         "user_changes": int(lines["user_change"].notna().sum()) if "user_change" in lines else 0,
+        "sources": sources or {},
     }
+
+
+def sources_sentence(sources: dict[str, Any] | None) -> str | None:
+    """Gap 8b: one line on the data sources used and missing."""
+    if not sources:
+        return None
+    used = sources.get("used") or []
+    missing = sources.get("missing") or []
+    if not used and not missing:
+        return None
+    out = ("Built from " + "; ".join(used)) if used else "Built from the imported data"
+    if missing:
+        out += "; not available: " + "; ".join(missing)
+    return out + "."
 
 
 def template_overview(f: dict[str, Any]) -> str:
@@ -250,5 +282,8 @@ def template_overview(f: dict[str, Any]) -> str:
         if f.get("user_changes"):
             bits.append(f"{f['user_changes']} lines changed by you")
         parts.append("Flags: " + ", ".join(bits) + ".")
+    src = sources_sentence(f.get("sources"))
+    if src:
+        parts.append(src)
     parts.append("See the reasoning report for the per-SKU detail.")
     return " ".join(parts)

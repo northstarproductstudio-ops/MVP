@@ -151,10 +151,35 @@ def run_materialize(conn: psycopg.Connection, store: Store, company_id: str, dat
             _copy_rows(conn, "core.extra_value", ["company_id", "dataset_id"] + ecols,
                        [(company_id, dataset_id, *r) for r in rows_for(res.extra, ecols, set())])
         warnings = list(ds["warnings"] or []) + res.warnings
-        conn.execute("UPDATE raw.dataset SET status='ready', warnings=%s WHERE id=%s",
-                     (Jsonb(sorted(set(warnings), key=warnings.index)), dataset_id))
+        d_from, d_to = data_period(table, res.frame)
+        # A file removed or replaced while it was importing stays removed.
+        conn.execute("UPDATE raw.dataset SET status='ready', warnings=%s, data_from=%s, data_to=%s "
+                     "WHERE id=%s AND status <> 'removed'",
+                     (Jsonb(sorted(set(warnings), key=warnings.index)), d_from, d_to, dataset_id))
+        if ds.get("replaces_dataset_id"):
+            # Gap 12: the old version is removed only once the new one is ready
+            # (removed_by was set when the user asked for the replacement)
+            conn.execute("UPDATE raw.dataset SET status='removed', removed_at=now() "
+                         "WHERE id=%s AND company_id=%s AND status <> 'removed'",
+                         (ds["replaces_dataset_id"], company_id))
+        conn.execute("UPDATE core.chat_session SET current_snapshot_id=NULL WHERE id=%s", (ds["sid"],))
     draft_crosswalk(conn, company_id, cfg)
     snapshots.build_and_store(conn, store, company_id, ds["sid"], cfg)
+
+
+DATE_COLUMN = {"sellin_line": "order_date", "po_line": "po_date", "stock_snapshot": "snapshot_date",
+               "market_daily": "market_date"}
+
+
+def data_period(table: str, frame: pd.DataFrame) -> tuple[Any, Any]:
+    """First and last date of the file's rows (shown on the Data screen as its period)."""
+    col = DATE_COLUMN.get(table)
+    if not col or frame is None or frame.empty or col not in frame.columns:
+        return None, None
+    s = pd.to_datetime(frame[col], errors="coerce").dropna()
+    if s.empty:
+        return None, None
+    return s.min().date(), s.max().date()
 
 
 def _copy_rows(conn: psycopg.Connection, table: str, cols: list[str], rows: list[tuple]) -> None:

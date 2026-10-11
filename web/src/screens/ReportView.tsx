@@ -13,6 +13,7 @@ const REASON_COLS: [string, string][] = [
   ["stock_cover_units", "Stock cover"], ["agent_factors", "Agent factors"], ["judgment_units", "Judgment"],
   ["reference_dp", "Reference"], ["pipeline_dp", "Pipeline DP"], ["user_change", "Your change"],
   ["final_dp", "Final DP"], ["reason", "Reason"], ["confidence", "Confidence"], ["flags", "Flags"],
+  ["batch", "Agent batch"], ["sources_used", "Sources used"], ["factors_off", "Factors off"],
 ];
 
 export function ReportView({ runId, initialTab, onClose }: { runId: string; initialTab: "plan" | "reasoning"; onClose: () => void }) {
@@ -69,6 +70,11 @@ export function ReportView({ runId, initialTab, onClose }: { runId: string; init
             </tbody>
           </table>
         </div>
+        {tab === "reasoning" && (data?.not_planned ?? []).length > 0 && (
+          <div className="notice" style={{ margin: "8px 16px" }}>
+            <strong>Not planned: no sales history</strong> — {data!.not_planned.join(", ")}
+          </div>
+        )}
         <div className="footer"><span className="muted">Showing {rows.length} of {fmt(data?.total)} rows · version {data?.version}</span></div>
       </div>
     </div>

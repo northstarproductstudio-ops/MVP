@@ -1,11 +1,15 @@
 // MVP-04: confirm how fields are stored (proposed mapping, custom mappings, save).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Json } from "../api";
 import { Chip, fmt, STATE_LABEL } from "../components/common";
+import { ReadinessPanel, useReadiness } from "../components/ReadinessPanel";
+
+// Gap 11: planners see display names; the stored mapping target stays the variable name.
+const snake = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 
 type Row = Json & { did: string; file: string; key: string; selected?: boolean };
 
-export function MappingScreen({ datasets, onSaved }: { datasets: Json[]; onSaved: (summaries: Json[]) => void }) {
+export function MappingScreen({ sessionId, datasets, onSaved }: { sessionId: string; datasets: Json[]; onSaved: (summaries: Json[]) => void }) {
   const parsed = datasets.filter((d) => d.status === "parsed");
   const [maps, setMaps] = useState<Record<string, Json>>({});
   const [rows, setRows] = useState<Row[]>([]);
@@ -14,6 +18,8 @@ export function MappingScreen({ datasets, onSaved }: { datasets: Json[]; onSaved
   const [error, setError] = useState<string | null>(null);
   const [custom, setCustom] = useState({ did: "", field: "", variable: "", category: "" });
   const [bulkCat, setBulkCat] = useState("");
+  const [readiness] = useReadiness(sessionId, datasets.map((d) => d.id + d.status));
+  const customCard = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -36,6 +42,16 @@ export function MappingScreen({ datasets, onSaved }: { datasets: Json[]; onSaved
   const variables: Json[] = any?.variables ?? [];
   const categories: string[] = any?.categories ?? [];
   const varCat = useMemo(() => Object.fromEntries(variables.map((v) => [v.name, v.category])), [variables]);
+  const label = useMemo(() => Object.fromEntries(variables.map((v) => [v.name, v.display_name || v.name])), [variables]);
+  const byLabel = useMemo(() => Object.fromEntries(variables.map((v) => [(v.display_name || v.name).toLowerCase(), v.name])), [variables]);
+  // typed text (a display name) → variable name; unknown text becomes a new question variable
+  const resolve = (text: string): { name: string | null; known: boolean; display: string } => {
+    const t = text.trim();
+    if (!t) return { name: null, known: false, display: "" };
+    const hit = byLabel[t.toLowerCase()] ?? (varCat[t] !== undefined ? t : undefined);
+    return hit ? { name: hit, known: true, display: label[hit] } : { name: snake(t), known: false, display: t };
+  };
+  const shownName = (r: Row) => (r.variable ? (label[r.variable] ?? r.new_variable?.display_name ?? r.variable) : "");
 
   const shown = rows.filter((r) => tab === "all" || r.did === tab);
   const counts = useMemo(() => {
@@ -70,9 +86,10 @@ export function MappingScreen({ datasets, onSaved }: { datasets: Json[]; onSaved
       for (const d of parsed) {
         const fields = rows.filter((r) => r.did === d.id).map((r) => ({
           sheet: r.sheet, source_field: r.source_field,
-          variable: r.state === "not_stored" ? null : r.variable,
+          variable: r.state === "not_stored" || r.state === "needs_decision" ? null : r.variable,
           category: r.category ?? varCat[r.variable] ?? null,
-          state: r.state === "needs_decision" ? "not_stored" : r.state,
+          // Gap 10: saving is never blocked; undecided fields stay undecided for next time
+          state: r.state,
           new_variable: r.new_variable ?? null,
         }));
         summaries.push({ file_name: d.file_name, ...(await api.saveMapping(d.id, fields)) });
@@ -87,10 +104,15 @@ export function MappingScreen({ datasets, onSaved }: { datasets: Json[]; onSaved
 
   const addCustom = () => {
     const r = rows.find((x) => x.did === custom.did && x.source_field === custom.field);
-    if (!r || !custom.variable) return;
-    update(r.key, { variable: custom.variable, category: custom.category || varCat[custom.variable] || "Other",
-      state: "custom", new_variable: varCat[custom.variable] ? null : { name: custom.variable, category: custom.category || "Other", data_type: r.inferred_type || "text" } });
+    const v = resolve(custom.variable);
+    if (!r || !v.name) return;
+    update(r.key, { variable: v.name, category: custom.category || varCat[v.name] || "Other",
+      state: "custom", new_variable: v.known ? null : { name: v.name, display_name: v.display, category: custom.category || "Other", data_type: r.inferred_type || "text" } });
     setCustom({ ...custom, field: "", variable: "", category: "" });
+  };
+  const mapNow = (variable: string) => {
+    setCustom((c) => ({ ...c, variable: label[variable] ?? variable, category: varCat[variable] ?? "" }));
+    customCard.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   if (!parsed.length) {
@@ -138,7 +160,9 @@ export function MappingScreen({ datasets, onSaved }: { datasets: Json[]; onSaved
         })}
       </div>
 
-      <div className="card pad">
+      <ReadinessPanel readiness={readiness} onMapNow={mapNow} />
+
+      <div className="card pad" ref={customCard}>
         <div className="row between"><h2>Add a custom mapping</h2></div>
         <div className="row wrap" style={{ marginTop: 12 }}>
           <select className="inline" value={custom.did} onChange={(e) => setCustom({ ...custom, did: e.target.value, field: "" })}>
@@ -148,12 +172,12 @@ export function MappingScreen({ datasets, onSaved }: { datasets: Json[]; onSaved
             <option value="">Field in file…</option>
             {rows.filter((r) => r.did === custom.did).map((r) => <option key={r.key} value={r.source_field}>{r.source_field}</option>)}
           </select>
-          <input className="inline" placeholder="Mapped variable" list="vars" value={custom.variable} onChange={(e) => setCustom({ ...custom, variable: e.target.value })} />
+          <input className="inline" placeholder="Maps to…" list="vars" value={custom.variable} onChange={(e) => setCustom({ ...custom, variable: e.target.value })} />
           <input className="inline" placeholder="Category" list="cats" value={custom.category} onChange={(e) => setCustom({ ...custom, category: e.target.value })} />
           <button className="btn" onClick={addCustom} disabled={!custom.field || !custom.variable}>Add mapping</button>
         </div>
-        {custom.variable && !varCat[custom.variable] && <p className="muted">No variable named {custom.variable} exists yet; it will be created as a conversation variable.</p>}
-        <datalist id="vars">{variables.map((v) => <option key={v.name} value={v.name} />)}</datalist>
+        {custom.variable && !resolve(custom.variable).known && <p className="muted">"{custom.variable}" is not a plan field yet; it will be stored for questions.</p>}
+        <datalist id="vars">{variables.map((v) => <option key={v.name} value={v.display_name || v.name}>{v.help ?? ""}</option>)}</datalist>
         <datalist id="cats">{categories.map((c) => <option key={c} value={c} />)}</datalist>
       </div>
 
@@ -186,9 +210,13 @@ export function MappingScreen({ datasets, onSaved }: { datasets: Json[]; onSaved
                     <td><div className="samples">{(r.sample_values ?? []).join(" · ")}</div>
                       {r.blank_pct > 0.1 && <div className="muted">{Math.round(r.blank_pct * 100)}% of rows are blank here</div>}</td>
                     <td>
-                      <input className="inline" list="vars" value={r.variable ?? ""} placeholder="No variable"
-                        onChange={(e) => update(r.key, { variable: e.target.value || null, state: e.target.value ? (varCat[e.target.value] ? "proposed" : "custom") : "needs_decision",
-                          category: varCat[e.target.value] ?? r.category })} />
+                      <input className="inline" list="vars" value={r.typed ?? shownName(r)} placeholder="Not mapped"
+                        onChange={(e) => {
+                          const v = resolve(e.target.value);
+                          update(r.key, { typed: e.target.value, variable: v.name, state: v.name ? (v.known ? "proposed" : "custom") : "needs_decision",
+                            category: (v.name && varCat[v.name]) ?? r.category,
+                            new_variable: v.name && !v.known ? { name: v.name, display_name: v.display, category: r.category || "Other", data_type: r.inferred_type || "text" } : null });
+                        }} />
                       {dup && <div className="error">another field already maps here</div>}
                     </td>
                     <td><input className="inline" list="cats" value={r.category ?? ""} placeholder="No category" onChange={(e) => update(r.key, { category: e.target.value })} /></td>

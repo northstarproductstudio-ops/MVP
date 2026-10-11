@@ -27,6 +27,7 @@ from core.logging import configure_logging, get_logger, init_sentry
 from core.plan_config import PlanConfig
 from core.storage import Store, clean_tmp
 from worker import importer, queue
+from worker.expiry import expire_removed
 from worker.runner import DbRunner, agent_recorder
 
 log = get_logger("worker")
@@ -37,6 +38,7 @@ class State:
     current_run: str | None = None
     heartbeat: queue.Heartbeat | None = None
     last_sweep = 0.0
+    last_expiry = float("-inf")  # first idle moment after start, then every 24 h
 
 
 def serve_health(port: int, worker_id: str) -> ThreadingHTTPServer:
@@ -94,6 +96,11 @@ def main() -> None:
                     State.last_sweep = time.monotonic()
                 job = queue.claim(conn, settings.worker_id)
                 if job is None:
+                    if time.monotonic() - State.last_expiry > 24 * 3600:
+                        # Gap 12: nightly expiry of removed raw files, when idle
+                        State.last_expiry = time.monotonic()
+                        days = int(PlanConfig.load().get("data.removed_retention_days", 30))
+                        log.info("expiry: %s", expire_removed(conn, store, days))
                     time.sleep(1)
                     continue
                 if not queue.take_chat_lock(conn, job.session_id):
@@ -161,6 +168,7 @@ def handle(job: queue.Job, conn: Any, pool: Any, store: Store, settings: Any) ->
             try:
                 if job.kind == "import":
                     llm = LLMClient(api_key=settings.openrouter_api_key.get_secret_value(), model=settings.llm_model,
+                                    fallback_model=settings.llm_fallback_model,
                                     base_url=settings.openrouter_base_url,
                                     recorder=agent_recorder(pool, job.company_id))
                     importer.run_import(conn, store, job.company_id, job.dataset_id, cfg, llm)  # type: ignore[arg-type]

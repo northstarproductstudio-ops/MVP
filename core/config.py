@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     openrouter_api_key: SecretStr = Field(alias="OPENROUTER_API_KEY")
     llm_model: str = Field(alias="LLM_MODEL")
+    # Gap 1: optional, so a deploy without it still starts (then there is no fallback)
+    llm_fallback_model: str | None = Field(default=None, alias="LLM_FALLBACK_MODEL")
     openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL")
 
     job_token: SecretStr | None = Field(default=None, alias="JOB_TOKEN")

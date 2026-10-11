@@ -1,8 +1,15 @@
 # File-type library. One entry = one adapter class in core/domain/adapters/.
 # Seeded into core.file_type. signature: columns matched case/whitespace-insensitively.
+# plan_role (Gap 8): essential = a demand plan cannot run without it; enhancer = it switches
+# factors on and answers more questions, but a plan runs without it. factors / missing_means /
+# questions are what the Ask agent says when the file is missing.
 - key: erp_sales_orders
   name: ERP sales orders (Zoho)
   group: sellin
+  plan_role: essential
+  factors: [base, trend]
+  missing_means: "No demand plan: the plan is built from sales history"
+  questions: "Sales history, trends, plan questions"
   header_rows: [1]
   signature: [SalesOrder ID, Order Date, Status, Customer Name, SKU, QuantityOrdered, Branch ID]
   writes: core.sellin_line
@@ -10,6 +17,10 @@
 - key: platform_po_instamart
   name: Platform PO — Instamart (Swiggy)
   group: po
+  plan_role: enhancer
+  factors: [fill_rate]
+  missing_means: "Fill-rate factor off, open PO quantity unknown"
+  questions: "Fill rate, open POs, lead time"
   header_rows: [1]
   signature: [PoNumber, FacilityId, City, OrderedQty, ReceivedQty, BalancedQty, SkuCode]
   writes: core.po_line
@@ -17,6 +28,10 @@
 - key: platform_po_zepto
   name: Platform PO — Zepto
   group: po
+  plan_role: enhancer
+  factors: [fill_rate]
+  missing_means: "Fill-rate factor off, open PO quantity unknown"
+  questions: "Fill rate, open POs, lead time"
   header_rows: [1]
   signature: [PO No., Del Location, SKU, EAN, Qty, ASN Quantity, GRN Quantity]
   writes: core.po_line
@@ -24,6 +39,10 @@
 - key: platform_po_bigbasket
   name: Platform PO / fill rate — BigBasket
   group: po
+  plan_role: enhancer
+  factors: [fill_rate]
+  missing_means: "Fill-rate factor off, open PO quantity unknown"
+  questions: "Fill rate, open POs, lead time"
   header_rows: [1]
   signature: [po_no, source_sku_id, po_quantity, grn_quantity, quantity_fillrate, po_type]
   writes: core.po_line
@@ -31,6 +50,10 @@
 - key: platform_stock_blinkit
   name: Platform stock (DOH/SOH) — Blinkit
   group: stock
+  plan_role: enhancer
+  factors: [stock_cover, netting]
+  missing_means: "Stock-cover factor and netting off"
+  questions: "Stock, days on hand"
   header_rows: [2]
   signature: [backend_facility_id, item_id, backend_inv_qty, frontend_inv_qty, RR, DOH]
   writes: core.stock_snapshot
@@ -38,6 +61,10 @@
 - key: market_category_insight
   name: Market data — Dcluttr category insight
   group: market
+  plan_role: enhancer
+  factors: [sell_through, osa_signal, market_ceiling]
+  missing_means: "Sell-through, OSA signal and market ceiling off"
+  questions: "Market share, OSA, competitor, price and discount"
   header_rows: [3]
   signature: [Date, Variant ID, Item ID, Brand, Category, Wt. OSA %, Est Category Share SP]
   writes: core.market_daily
@@ -45,6 +72,10 @@
 - key: sku_master
   name: SKU master
   group: sku_master
+  plan_role: enhancer
+  factors: [case_size, moq]
+  missing_means: "Category from the template or Dcluttr; case size 1, no MOQ"
+  questions: "Case pack, MOQ"
   header_rows: [1]
   signature: [SKU, case size, MOQ, category]
   writes: core.sku_master
@@ -52,6 +83,10 @@
 - key: custom
   name: Custom
   group: custom
+  plan_role: enhancer
+  factors: []
+  missing_means: "Nothing in the plan changes"
+  questions: "Questions about its own columns"
   header_rows: []
   signature: []
   writes: core.extra_value

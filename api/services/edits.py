@@ -53,7 +53,7 @@ async def apply_edit(cur: psycopg.AsyncCursor[Any], company_id: str, run_id: str
     await cur.execute("SELECT name, value, enabled FROM core.factor WHERE run_id=%s", (run_id,))
     factors = pd.DataFrame([dict(r) for r in await cur.fetchall()])
     facts = overview_facts(after, factors, rep.get("last_month_sellin") or 0, str(run["target_month"]),
-                           new_version, [])
+                           new_version, [], rep.get("sources"))
     overview = template_overview(facts)
     await cur.execute("UPDATE core.report_version SET is_current=false WHERE run_id=%s AND is_current", (run_id,))
     await cur.execute(

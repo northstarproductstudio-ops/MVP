@@ -18,12 +18,12 @@ def library_payload() -> list[dict[str, Any]]:
 
 
 def catalogue_payload() -> list[dict[str, Any]]:
-    return [{"name": v.name, "category": v.category, "type": v.data_type, "unit": v.unit, "tier": v.tier,
-             "level": v.level} for v in catalogue().values()]
+    return [{"name": v.name, "display_name": v.label, "category": v.category, "type": v.data_type,
+             "unit": v.unit, "tier": v.tier, "level": v.level} for v in catalogue().values()]
 
 
 def make_import_agent(llm: LLMClient, company_id: str, session_id: str | None,
-                      version: str = "v1") -> Callable[[dict[str, Any]], dict[str, Any] | None]:
+                      version: str = "v2") -> Callable[[dict[str, Any]], dict[str, Any] | None]:
     system = load_prompt("import_agent", version)
 
     def call(payload: dict[str, Any]) -> dict[str, Any] | None:

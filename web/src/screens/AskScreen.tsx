@@ -10,7 +10,8 @@ const SECTIONS = [
 ];
 
 type Turn = {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
+  missing?: Json;
   text: string;
   tools: string[];
   evidence: Json[];
@@ -19,15 +20,17 @@ type Turn = {
   failed?: Json;
 };
 
-export function AskScreen({ session, pendingQuestion, onConsumed }: {
+export function AskScreen({ session, pendingQuestion, onConsumed, onAddFile }: {
   session: Json;
   pendingQuestion: string | null;
   onConsumed: () => void;
+  onAddFile: (fileGroup?: string) => void;
 }) {
   const [turns, setTurns] = useState<Turn[]>(() =>
     (session.messages ?? []).map((m: Json) => ({
       role: m.role, text: m.content ?? "", tools: [], evidence: m.evidence ?? [],
       runId: (m.tool_calls ?? []).map((t: Json) => t.run_id).filter(Boolean).pop(),
+      missing: (m.tool_calls ?? []).map((t: Json) => t.missing_file).filter(Boolean).pop(),
     })));
   // redraw report cards for runs referenced in the history
   useEffect(() => {
@@ -75,6 +78,7 @@ export function AskScreen({ session, pendingQuestion, onConsumed }: {
         else if (e.type === "run_queued") patchLast((t) => ({ ...t, runId: e.run_id }));
         else if (e.type === "report_card") patchLast((t) => ({ ...t, card: e, runId: e.run_id }));
         else if (e.type === "run_failed") patchLast((t) => ({ ...t, failed: e }));
+        else if (e.type === "missing_file") patchLast((t) => ({ ...t, missing: e }));
       });
     } catch (err: any) {
       patchLast((t) => ({ ...t, text: t.text || `Something went wrong: ${err.message}` }));
@@ -90,6 +94,10 @@ export function AskScreen({ session, pendingQuestion, onConsumed }: {
     <div className="col">
       <div>
         <h1>Ask about your data and the plan</h1>
+        <div className="row between">
+          <span />
+          <button className="btn small ghost" onClick={() => onAddFile()}>Data</button>
+        </div>
         {ws?.has_data && (
           <p className="sub">{ws.datasets} files · data {ws.date_from} → {ws.as_of} · {ws.skus} SKUs · {ws.cities?.length} cities · {ws.platforms?.length} platforms</p>
         )}
@@ -111,7 +119,7 @@ export function AskScreen({ session, pendingQuestion, onConsumed }: {
       <div className="chat">
         {turns.map((t, i) => (
           <div key={i} className={`msg ${t.role}`}>
-            {t.role === "user" ? t.text : (
+            {t.role === "system" ? <div className="toolchip">· {t.text}</div> : t.role === "user" ? t.text : (
               <>
                 {t.tools.map((l, j) => <div className="toolchip" key={j}>↳ {l}</div>)}
                 {t.runId && <RunCard runId={t.runId} collapsed={Boolean(t.card)}
@@ -125,6 +133,12 @@ export function AskScreen({ session, pendingQuestion, onConsumed }: {
                 )}
                 {t.card && <ReportCard card={t.card} onOpen={(tab) => setReport({ runId: t.card!.run_id, tab })} />}
                 {(t.text || (busy && i === turns.length - 1)) && <div className="bubble">{t.text || "…"}</div>}
+                {t.missing && (
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <button className="btn small" onClick={() => onAddFile(t.missing!.file_group)}>
+                      {t.missing.action === "map" ? "Open Data to map fields" : `Add file · ${t.missing.label}`}</button>
+                  </div>
+                )}
                 {t.evidence.map((ev, j) => <Evidence key={j} ev={ev} />)}
               </>
             )}
@@ -234,6 +248,12 @@ function ReportCard({ card, onOpen }: { card: Json; onOpen: (tab: "plan" | "reas
       </div>
       {card.overview && <p style={{ marginBottom: 0 }}>{card.overview}</p>}
       {card.order_total == null && <p className="muted" style={{ marginBottom: 0 }}>Order quantity needs stock data.</p>}
+      {(card.not_planned ?? []).length > 0 && (
+        <details style={{ marginTop: 8 }}>
+          <summary className="muted">Not planned: no sales history · {card.not_planned.length} SKUs</summary>
+          <p className="muted" style={{ margin: "6px 0 0" }}>{card.not_planned.slice(0, 40).join(", ")}{card.not_planned.length > 40 ? ` and ${card.not_planned.length - 40} more` : ""}</p>
+        </details>
+      )}
       {(card.warnings ?? []).length > 0 && (
         <details style={{ marginTop: 8 }}><summary className="muted">{card.warnings.length} warnings</summary>
           <ul className="muted">{card.warnings.map((w: string) => <li key={w}>{w}</li>)}</ul></details>

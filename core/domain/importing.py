@@ -14,7 +14,7 @@ from core.domain import file_types
 from core.domain.adapters import REGISTRY, get_adapter
 from core.domain.adapters.base import SourceSheet, TransformResult
 from core.domain.file_reader import RawSheet, infer_type, norm_key, preview, read_sheet
-from core.domain.variables import catalogue, compatible, hard_variables
+from core.domain.variables import catalogue, compatible, display_name, hard_variables, humanize
 from core.models.imports import ImportProposal, NewVariable, ProposedField, SheetChoice
 from core.plan_config import PlanConfig
 
@@ -79,7 +79,8 @@ def parse_file(path: Path, file_name: str, cfg: PlanConfig,
                   key=lambda r: sum(1 for v in sh.preview[r - 1] if v not in (None, "")), default=1)
         sources = [SourceSheet(sh.name, hdr, read_sheet(path, sh.name, hdr))]
 
-    saved_rows = (saved or {}).get(file_type, [])
+    # an undecided field saved earlier is not a mapping; it is proposed again
+    saved_rows = [r for r in (saved or {}).get(file_type, []) if r.get("state") != "needs_decision"]
     saved_map = {(r["source_sheet"], norm_key(r["source_field"])): r for r in saved_rows}
     saved_any_sheet = {norm_key(r["source_field"]): r for r in saved_rows}
     cat = catalogue()
@@ -108,7 +109,7 @@ def parse_file(path: Path, file_name: str, cfg: PlanConfig,
                 name, category = tier2[col]
                 pf.variable, pf.category, pf.tier = name, category, 2
                 pf.new_variable = NewVariable(name=name, category=category,
-                                              data_type=pf.inferred_type or "text")
+                                              data_type=pf.inferred_type or "text", display_name=humanize(name))
                 pf.state = "proposed" if category in {c.category for c in cat.values()} else "new_category"
                 pf.confidence = 0.8
             elif pf.inferred_type == "empty":
@@ -153,7 +154,7 @@ def parse_file(path: Path, file_name: str, cfg: PlanConfig,
     mapped_vars = {f.variable for f in proposal.fields if f.variable}
     for hv in hard_variables(group) if group == "sellin" else []:
         if hv not in mapped_vars:
-            proposal.warnings.append(f"Required field {hv} is not mapped; a plan cannot run until it is")
+            proposal.warnings.append(f"Required field {display_name(hv)} is not mapped; a plan cannot run until it is")
     return ParsedFile(sheets=sheets, sources=sources, proposal=proposal)
 
 
@@ -203,6 +204,7 @@ def merge_agent_answer(p: ImportProposal, ans: dict[str, Any], used_tier1: set[s
         else:
             nv = a.get("new_variable") or {"name": var, "category": a.get("category") or "Other",
                                            "data_type": f.inferred_type or "text"}
+            nv = {**nv, "display_name": (nv.get("display_name") or "").strip() or humanize(nv["name"])}
             f.variable, f.tier = nv["name"], 2
             f.category = nv.get("category") or a.get("category")
             f.new_variable = NewVariable(**nv)

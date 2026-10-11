@@ -91,7 +91,11 @@ moving on. Plan on 2–3 hours the first time.
 3. **Privacy**: the code sends `provider.data_collection = deny`. Also turn off "allow training"
    in your OpenRouter privacy settings.
 4. Pick `LLM_MODEL`, a model id that supports **structured outputs / JSON schema** (shown on the
-   model's page). Start with one strong model; comparing 2–3 is phase 4 of the plan.
+   model's page), and optionally `LLM_FALLBACK_MODEL`, tried once when the primary fails (429,
+   5xx, model/provider error). Defaults in `.env.example`: Nemotron 3 Super 120B (free) and
+   GLM 4.5 Air (free) — confirm both ids are live with structured-output and tool support.
+   Rate limits are OpenRouter's: the code never counts or throttles calls. A plan is now about
+   one call per category batch (≈ 30 for the sample data), not one per SKU.
 
 ---
 
@@ -247,6 +251,7 @@ Catalyst console → **Serverless → AppSail → fmcg-worker**:
    | `SUPABASE_SERVICE_ROLE_KEY` | service_role key |
    | `OPENROUTER_API_KEY` | key |
    | `LLM_MODEL` | model id |
+   | `LLM_FALLBACK_MODEL` | optional fallback model id |
    | `WORKER_URL` | the worker's own URL from 6.4 |
    | `SENTRY_DSN` | optional |
    | `GIT_SHA` | same as in Part 3 |
@@ -271,7 +276,7 @@ Note the URL → `API_URL`. Then console → **fmcg-api** → Configuration: mem
 | `SUPABASE_URL` | `https://<ref>.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | service_role key |
 | `SUPABASE_JWT_SECRET` | only if your project uses the legacy HS256 secret |
-| `OPENROUTER_API_KEY`, `LLM_MODEL` | same as the worker |
+| `OPENROUTER_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL` | same as the worker |
 | `JOB_TOKEN` | from Part 3 |
 | `WORKER_URL` | from 6.4 |
 | `CORS_ORIGINS` | set in Part 8 once the web URL exists (comma-separated, no `*`) |

@@ -44,6 +44,17 @@ export const api = {
   setType: (did: string, file_type: string, custom_name?: string) =>
     req(`/imports/${did}/type`, { method: "PATCH", body: JSON.stringify({ file_type, custom_name }) }),
   suggestions: (sid: string) => req(`/sessions/${sid}/suggestions`),
+  // Gap 10: what the plan needs (same rule the run uses)
+  readiness: (sid: string) => req(`/sessions/${sid}/readiness`),
+  // Gap 12: data management
+  datasets: (sid: string) => req(`/sessions/${sid}/datasets`),
+  replaceDataset: (did: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    return req(`/datasets/${did}/replace`, { method: "POST", body: fd });
+  },
+  removeDataset: (did: string) => req(`/datasets/${did}`, { method: "DELETE" }),
+  clearDatasets: (sid: string) => req(`/sessions/${sid}/datasets/clear`, { method: "POST" }),
   run: (rid: string) => req(`/runs/${rid}`),
   retry: (rid: string) => req(`/runs/${rid}/retry`, { method: "POST" }),
   cancel: (rid: string) => req(`/runs/${rid}/cancel`, { method: "POST" }),

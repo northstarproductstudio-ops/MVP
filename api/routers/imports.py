@@ -14,7 +14,7 @@ from api.deps import CurrentUser, pool, store
 from api.services.wake import wake_worker
 from core.db import tenant_transaction
 from core.domain.adapters import REGISTRY
-from core.domain.variables import catalogue, categories
+from core.domain.variables import catalogue, categories, display_name, humanize
 from core.models.imports import MappingSave
 from core.storage import upload_key
 
@@ -32,59 +32,82 @@ async def upload(session_id: str, user: CurrentUser, files: list[UploadFile] = F
         await cur.execute("SELECT 1 FROM core.chat_session WHERE id=%s", (session_id,))
         if not await cur.fetchone():
             raise HTTPException(404, "chat not found")
+        await guard_no_run(cur, session_id)
         await cur.execute("SELECT count(*) AS n FROM raw.dataset WHERE session_id=%s AND status NOT IN "
-                          "('failed','duplicate')", (session_id,))
+                          "('failed','duplicate','removed')", (session_id,))
         if (await cur.fetchone())["n"] + len(files) > MAX_FILES:
             raise HTTPException(400, f"A chat holds at most {MAX_FILES} files")
-    out = []
-    for f in files:
-        name = f.filename or "upload"
-        if not name.lower().endswith(ALLOWED):
-            out.append({"file_name": name, "status": "failed", "error": "Only CSV and XLSX files are supported"})
-            continue
-        # hash first (streamed from the spooled upload), then stream to Storage
-        h = hashlib.sha256()
-        size = 0
-        while chunk := await f.read(CHUNK):
-            h.update(chunk)
-            size += len(chunk)
-        sha = h.hexdigest()
+    out = [await ingest_file(f, user, session_id) for f in files]
+    if any(o["status"] == "uploaded" for o in out):
         async with tenant_transaction(pool(), user.company_id) as cur:
-            await cur.execute("SELECT id::text, file_name FROM raw.dataset WHERE content_sha256=%s AND status NOT IN "
-                              "('failed','duplicate')", (sha,))
-            dup = await cur.fetchone()
-        if dup:
-            out.append({"file_name": name, "status": "duplicate", "dataset_id": dup["id"],
-                        "error": f"Same content as {dup['file_name']}; not imported twice"})
-            continue
-        key = upload_key(user.company_id, session_id, sha, name)
-        await f.seek(0)
-
-        def chunks(fh=f.file):  # sync generator over the spooled temp file
-            while True:
-                b = fh.read(CHUNK)
-                if not b:
-                    return
-                yield b
-
-        import asyncio
-
-        try:
-            await asyncio.to_thread(store().put_stream, key, chunks())
-        except Exception as exc:  # noqa: BLE001
-            if "write-once" not in str(exc):
-                raise HTTPException(502, "Could not store the file; please retry") from None
-        async with tenant_transaction(pool(), user.company_id) as cur:
-            await cur.execute(
-                """INSERT INTO raw.dataset (company_id, session_id, file_name, file_size, content_sha256, storage_key)
-                   VALUES (%s,%s,%s,%s,%s,%s) RETURNING id::text""",
-                (user.company_id, session_id, name, size, sha, key))
-            did = (await cur.fetchone())["id"]
-            await cur.execute("INSERT INTO meta.job_queue (company_id, session_id, dataset_id, kind) "
-                              "VALUES (%s,%s,%s,'import')", (user.company_id, session_id, did))
-        out.append({"file_name": name, "status": "uploaded", "dataset_id": did, "size": size})
+            await data_changed(cur, user.company_id, session_id,
+                               "Added " + ", ".join(o["file_name"] for o in out if o["status"] == "uploaded"))
     wake_worker()
     return {"files": out}
+
+
+async def guard_no_run(cur: Any, session_id: str) -> None:
+    """Gap 12: no file change while a plan in the same chat is queued or running."""
+    await cur.execute("SELECT 1 FROM meta.workflow_run WHERE session_id=%s AND status IN ('queued','running')",
+                      (session_id,))
+    if await cur.fetchone():
+        raise HTTPException(409, "A plan is running; try again when it finishes.")
+
+
+async def data_changed(cur: Any, company_id: str, session_id: str, note: str) -> None:
+    """Every data change clears the chat's snapshot (the next question or plan builds a fresh
+    one) and leaves a short system note in the chat. Finished runs keep their own snapshot."""
+    await cur.execute("UPDATE core.chat_session SET current_snapshot_id=NULL WHERE id=%s", (session_id,))
+    await cur.execute("INSERT INTO core.chat_message (company_id, session_id, role, content) VALUES (%s,%s,'system',%s)",
+                      (company_id, session_id, note))
+
+
+async def ingest_file(f: UploadFile, user: Any, session_id: str, replaces: str | None = None) -> dict[str, Any]:
+    """Hash, store (write-once) and register one uploaded file; queue its import job."""
+    import asyncio
+
+    name = f.filename or "upload"
+    if not name.lower().endswith(ALLOWED):
+        return {"file_name": name, "status": "failed", "error": "Only CSV and XLSX files are supported"}
+    # hash first (streamed from the spooled upload), then stream to Storage
+    h = hashlib.sha256()
+    size = 0
+    while chunk := await f.read(CHUNK):
+        h.update(chunk)
+        size += len(chunk)
+    sha = h.hexdigest()
+    async with tenant_transaction(pool(), user.company_id) as cur:
+        await cur.execute("SELECT id::text, file_name FROM raw.dataset WHERE content_sha256=%s AND status NOT IN "
+                          "('failed','duplicate','removed')", (sha,))
+        dup = await cur.fetchone()
+    if dup:
+        return {"file_name": name, "status": "duplicate", "dataset_id": dup["id"],
+                "error": f"Same content as {dup['file_name']}; not imported twice"}
+    key = upload_key(user.company_id, session_id, sha, name)
+    await f.seek(0)
+
+    def chunks(fh: Any = f.file) -> Any:  # sync generator over the spooled temp file
+        while True:
+            b = fh.read(CHUNK)
+            if not b:
+                return
+            yield b
+
+    try:
+        await asyncio.to_thread(store().put_stream, key, chunks())
+    except Exception as exc:  # noqa: BLE001
+        if "write-once" not in str(exc):  # the same bytes were stored before (e.g. a removed file re-added)
+            raise HTTPException(502, "Could not store the file; please retry") from None
+    async with tenant_transaction(pool(), user.company_id) as cur:
+        await cur.execute(
+            """INSERT INTO raw.dataset (company_id, session_id, file_name, file_size, content_sha256, storage_key,
+               replaces_dataset_id) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id::text""",
+            (user.company_id, session_id, name, size, sha, key, replaces))
+        did = (await cur.fetchone())["id"]
+        await cur.execute("INSERT INTO meta.job_queue (company_id, session_id, dataset_id, kind) "
+                          "VALUES (%s,%s,%s,'import')", (user.company_id, session_id, did))
+    return {"file_name": name, "status": "uploaded", "dataset_id": did, "size": size,
+            "replaces_dataset_id": replaces}
 
 
 @router.get("/imports/{dataset_id}")
@@ -107,16 +130,17 @@ async def get_mapping(dataset_id: str, user: CurrentUser) -> dict[str, Any]:
         await cur.execute("SELECT id::text, file_name, status, file_type, proposal, rows_read FROM raw.dataset "
                           "WHERE id=%s", (dataset_id,))
         d = await cur.fetchone()
-        await cur.execute("SELECT name, category, data_type, tier, level FROM core.variable ORDER BY tier, category, name")
+        await cur.execute("SELECT name, category, data_type, tier, level, display_name, help FROM core.variable "
+                          "ORDER BY tier, category, name")
         company_vars = [dict(r) for r in await cur.fetchall()]
     if not d:
         raise HTTPException(404, "file not found")
     if not d["proposal"]:
         raise HTTPException(409, "The file is still being read")
-    vars_ = {v.name: {"name": v.name, "category": v.category, "data_type": v.data_type, "tier": v.tier,
-                      "level": v.level} for v in catalogue().values()}
+    vars_ = {v.name: {"name": v.name, "display_name": v.label, "help": v.help, "category": v.category,
+                      "data_type": v.data_type, "tier": v.tier, "level": v.level} for v in catalogue().values()}
     for v in company_vars:
-        vars_.setdefault(v["name"], v)
+        vars_.setdefault(v["name"], {**v, "display_name": v.get("display_name") or humanize(v["name"])})
     return {"dataset_id": d["id"], "file_name": d["file_name"], "status": d["status"], "rows_read": d["rows_read"],
             "proposal": d["proposal"], "variables": list(vars_.values()),
             "categories": sorted(set(categories()) | {v["category"] for v in company_vars}),
@@ -176,19 +200,19 @@ async def save_mapping(dataset_id: str, body: MappingSave, user: CurrentUser) ->
         known_cats = set(categories())
         for f in body.fields:
             prop = proposal.get((f.sheet, f.source_field), {})
-            if f.state == "needs_decision":
-                raise HTTPException(400, f"{f.source_field} still needs a decision")
-            if f.variable and f.state != "not_stored":
+            # Gap 10: saving is never blocked; an undecided field is simply not stored yet.
+            if f.variable and f.state not in ("not_stored", "needs_decision"):
                 state = "custom" if f.state == "custom" else "confirmed"
                 custom += state == "custom"
                 if f.variable not in cat:
                     category = f.category or (f.new_variable.category if f.new_variable else "Other")
                     await cur.execute(
-                        """INSERT INTO core.variable (company_id, name, category, data_type, tier, level, origin)
-                           VALUES (%s,%s,%s,%s,2,'none',%s) ON CONFLICT DO NOTHING""",
+                        """INSERT INTO core.variable (company_id, name, category, data_type, tier, level, origin,
+                           display_name) VALUES (%s,%s,%s,%s,2,'none',%s,%s) ON CONFLICT DO NOTHING""",
                         (user.company_id, f.variable, category,
                          (f.new_variable.data_type if f.new_variable else prop.get("inferred_type")) or "text",
-                         "user" if f.state == "custom" else "agent"))
+                         "user" if f.state == "custom" else "agent",
+                         (f.new_variable.display_name if f.new_variable else None) or humanize(f.variable)))
                     if category not in known_cats:
                         new_cats.add(category)
                 stored.append((f, state))
@@ -197,9 +221,11 @@ async def save_mapping(dataset_id: str, body: MappingSave, user: CurrentUser) ->
             await cur.execute(
                 """INSERT INTO core.field_mapping (company_id, version_id, source_sheet, source_field, variable, category,
                    state, confidence, sample_values) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (user.company_id, vid, f.sheet, f.source_field, f.variable if f.state != "not_stored" else None,
-                 f.category, "not_stored" if f.state == "not_stored" or not f.variable else
-                 ("custom" if f.state == "custom" else "confirmed"), prop.get("confidence"),
+                (user.company_id, vid, f.sheet, f.source_field,
+                 f.variable if f.state not in ("not_stored", "needs_decision") else None,
+                 f.category, "needs_decision" if f.state == "needs_decision" else
+                 ("not_stored" if f.state == "not_stored" or not f.variable else
+                  ("custom" if f.state == "custom" else "confirmed")), prop.get("confidence"),
                  Jsonb(prop.get("sample_values") or [])))
         await cur.execute("UPDATE raw.dataset SET status='mapped', mapping_version_id=%s WHERE id=%s", (vid, dataset_id))
         await cur.execute("INSERT INTO meta.job_queue (company_id, session_id, dataset_id, kind) "
@@ -214,5 +240,7 @@ async def save_mapping(dataset_id: str, body: MappingSave, user: CurrentUser) ->
     return {"dataset_id": dataset_id, "mapping_version": version, "variables_stored": len(stored),
             "categories": len(by_cat), "new_categories": sorted(new_cats), "custom_mappings": custom,
             "fields_not_stored": not_stored,
-            "available": [{"category": k, "variables": sorted(set(v))} for k, v in sorted(by_cat.items())],
+            "available": [{"category": k, "variables": sorted(set(v)),
+                           "display_names": [display_name(x) for x in sorted(set(v))]}
+                          for k, v in sorted(by_cat.items())],
             "warnings": d["warnings"] or [], "crosswalk": cw}

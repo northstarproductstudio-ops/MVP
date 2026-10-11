@@ -1,52 +1,52 @@
-name,category,data_type,unit,tier,level,file_group,definition
-sku_code,Product,text,,1,hard,sellin,Company SKU code; master key for every step
-item_name,Product,text,,1,soft,sellin,Item name used for crosswalk matching and reports
-order_date,Time,date,,1,hard,sellin,Sales-order date
-so_status,Sales,text,,1,hard,sellin,Sales-order status; invoiced and confirmed are kept
-customer_name,Channel,text,,1,hard,sellin,ERP customer; mapped to a platform by customer rules
-ship_city,Store locations,text,,1,hard,sellin,Shipping city; mapped to a planning city
-qty_invoiced,Sales,integer,pcs,1,hard,sellin,Quantity invoiced
-qty_cancelled,Sales,integer,pcs,1,soft,sellin,Quantity cancelled (0 if missing)
-qty_ordered,Sales,integer,pcs,1,soft,sellin,Quantity ordered; fallback sell-in quantity
-item_price,Pricing,money,₹/pc,1,soft,sellin,Item price for ABC value
-mrp,Pricing,money,₹/pc,1,soft,sellin,MRP; ABC fallback and reports
-branch_id,Channel,text,,1,key,sellin,ERP branch; detects the org-2 column shift
-so_id,Sales,text,,1,key,sellin,Sales-order id (natural key with line)
-so_number,Sales,text,,1,soft,sellin,Sales-order number
-reference_no,Sales,text,,1,soft,sellin,Customer reference number
-po_number,Purchase orders,text,,1,key,po,Platform PO number; de-duplication
-po_date,Purchase orders,date,,1,soft,po,PO creation date; fill-rate window
-po_status,Purchase orders,text,,1,soft,po,"Completed, expired, open, cancelled"
-facility,Store locations,text,,1,soft,po,Fulfilment centre or warehouse
-po_city,Store locations,text,,1,soft,po,PO city; mapped to a planning city
-platform_item_id,Product,text,,1,key,po,Platform item id; crosswalk key
-platform_item_name,Product,text,,1,soft,po,Platform item name; crosswalk name match
-ean,Product,text,,1,key,po,EAN barcode; crosswalk key
-po_qty_ordered,Purchase orders,integer,pcs,1,soft,po,PO quantity ordered
-po_qty_received,Purchase orders,integer,pcs,1,soft,po,PO quantity received (GRN)
-po_qty_open,Purchase orders,integer,pcs,1,soft,po,Open PO quantity
-po_expected_date,Purchase orders,date,,1,soft,po,Expected delivery date
-po_expiry_date,Purchase orders,date,,1,soft,po,PO expiry date
-unit_cost,Pricing,money,₹/pc,1,soft,po,Unit landing cost; reports only
-snapshot_date,Time,date,,1,soft,stock,Stock snapshot date
-stock_city,Store locations,text,,1,soft,stock,City of the stock facility
-soh_units,Inventory,integer,pcs,1,soft,stock,Stock on hand
-run_rate,Inventory,decimal,pcs/day,1,soft,stock,Daily run rate
-doh,Inventory,decimal,days,1,soft,stock,Days on hand
-market_date,Time,date,,1,soft,market,Market data date
-variant_id,Product,text,,1,key,market,Dcluttr variant id
-brand,Product,text,,1,soft,market,Brand
-category,Product,text,,1,soft,market,Market category
-product_name,Product,text,,1,soft,market,Product name
-pack_size,Product,text,,1,soft,market,Pack size text
-sales_value_mrp,Market,money,₹/day,1,soft,market,Estimated daily sales at MRP
-sales_value_sp,Market,money,₹/day,1,soft,market,Estimated daily sales at selling price
-selling_price,Pricing,money,₹/pc,1,soft,market,Selling price
-discount_pct,Pricing,decimal,%,1,soft,market,Weighted discount
-osa_pct,Availability,decimal,%,1,soft,market,Weighted on-shelf availability
-category_share_mrp,Market,decimal,%,1,soft,market,Estimated category share at MRP
-category_share_sp,Market,decimal,%,1,soft,market,Estimated category share at SP
-market_city,Store locations,text,,1,soft,market,City column in market data when present
-case_size,Product,integer,pcs,1,soft,sku_master,Case pack size
-moq,Product,integer,pcs,1,soft,sku_master,Minimum order quantity
-plan_category,Product,text,,1,soft,sku_master,formatRef plan category
+name,category,data_type,unit,tier,level,file_group,definition,display_name,help
+sku_code,Product,text,,1,hard,sellin,Company SKU code; master key for every step,SKU code,"Your internal product code, the key that joins every file"
+item_name,Product,text,,1,soft,sellin,Item name used for crosswalk matching and reports,Product name,Product name as it appears on the sales order
+order_date,Time,date,,1,hard,sellin,Sales-order date,Order date,Date the sales order was raised
+so_status,Sales,text,,1,hard,sellin,Sales-order status; invoiced and confirmed are kept,Order status,"Invoiced, confirmed, void or draft"
+customer_name,Channel,text,,1,hard,sellin,ERP customer; mapped to a platform by customer rules,Customer,Buyer on the order; tells us the platform
+ship_city,Store locations,text,,1,hard,sellin,Shipping city; mapped to a planning city,Shipping city,City the order ships to
+qty_invoiced,Sales,integer,pcs,1,hard,sellin,Quantity invoiced,Quantity invoiced,Units billed to the customer
+qty_cancelled,Sales,integer,pcs,1,soft,sellin,Quantity cancelled (0 if missing),Quantity cancelled,Units ordered but not shipped
+qty_ordered,Sales,integer,pcs,1,soft,sellin,Quantity ordered; fallback sell-in quantity,Quantity ordered,Units the customer ordered on the sales order
+item_price,Pricing,money,₹/pc,1,soft,sellin,Item price for ABC value,Item price,Price per unit charged to the customer
+mrp,Pricing,money,₹/pc,1,soft,sellin,MRP; ABC fallback and reports,MRP,Maximum retail price per unit
+branch_id,Channel,text,,1,key,sellin,ERP branch; detects the org-2 column shift,Branch ID,Your shipping branch in the ERP
+so_id,Sales,text,,1,key,sellin,Sales-order id (natural key with line),Sales order ID,Unique ID of the sales order in the ERP
+so_number,Sales,text,,1,soft,sellin,Sales-order number,Sales order number,Sales order number shown on documents
+reference_no,Sales,text,,1,soft,sellin,Customer reference number,Customer reference,"Customer's reference, often their PO number"
+po_number,Purchase orders,text,,1,key,po,Platform PO number; de-duplication,PO number,The platform's purchase order number
+po_date,Purchase orders,date,,1,soft,po,PO creation date; fill-rate window,PO date,Date the platform raised the purchase order
+po_status,Purchase orders,text,,1,soft,po,"Completed, expired, open, cancelled",PO status,"Completed, expired, open or cancelled"
+facility,Store locations,text,,1,soft,po,Fulfilment centre or warehouse,Warehouse,Platform fulfilment centre or warehouse
+po_city,Store locations,text,,1,soft,po,PO city; mapped to a planning city,PO city,City of the warehouse the PO is for
+platform_item_id,Product,text,,1,key,po,Platform item id; crosswalk key,Platform item ID,The platform's own ID for the product
+platform_item_name,Product,text,,1,soft,po,Platform item name; crosswalk name match,Platform item name,Product name as the platform lists it
+ean,Product,text,,1,key,po,EAN barcode; crosswalk key,Barcode (EAN),Product barcode; links products across files
+po_qty_ordered,Purchase orders,integer,pcs,1,soft,po,PO quantity ordered,PO quantity ordered,Units the platform ordered on its PO
+po_qty_received,Purchase orders,integer,pcs,1,soft,po,PO quantity received (GRN),PO quantity received,Units the platform received (GRN)
+po_qty_open,Purchase orders,integer,pcs,1,soft,po,Open PO quantity,PO quantity open,Units still due on open POs
+po_expected_date,Purchase orders,date,,1,soft,po,Expected delivery date,PO delivery date,Date the platform expects delivery
+po_expiry_date,Purchase orders,date,,1,soft,po,PO expiry date,PO expiry date,Date the purchase order expires
+unit_cost,Pricing,money,₹/pc,1,soft,po,Unit landing cost; reports only,Unit cost,Price the platform pays per unit
+snapshot_date,Time,date,,1,soft,stock,Stock snapshot date,Stock date,Date the stock figures were taken
+stock_city,Store locations,text,,1,soft,stock,City of the stock facility,Stock city,City of the warehouse holding the stock
+soh_units,Inventory,integer,pcs,1,soft,stock,Stock on hand,Stock on hand,Units in platform warehouses and dark stores
+run_rate,Inventory,decimal,pcs/day,1,soft,stock,Daily run rate,Daily run rate,Units sold per day at the platform
+doh,Inventory,decimal,days,1,soft,stock,Days on hand,Days on hand,How many days the stock lasts at the run rate
+market_date,Time,date,,1,soft,market,Market data date,Market data date,Day the market figures are for
+variant_id,Product,text,,1,key,market,Dcluttr variant id,Market variant ID,Dcluttr's ID for a product variant
+brand,Product,text,,1,soft,market,Brand,Brand,Brand of the product in market data
+category,Product,text,,1,soft,market,Market category,Market category,Category the product sits in on the platform
+product_name,Product,text,,1,soft,market,Product name,Market product name,Product name in market data
+pack_size,Product,text,,1,soft,market,Pack size text,Pack size,"Pack size, such as 100 g or 500 ml"
+sales_value_mrp,Market,money,₹/day,1,soft,market,Estimated daily sales at MRP,Market sales at MRP,Estimated daily sales at MRP (Dcluttr)
+sales_value_sp,Market,money,₹/day,1,soft,market,Estimated daily sales at selling price,Market sales value,Estimated daily sales at selling price (Dcluttr)
+selling_price,Pricing,money,₹/pc,1,soft,market,Selling price,Selling price,Price the shopper paid that day
+discount_pct,Pricing,decimal,%,1,soft,market,Weighted discount,Discount %,Weighted discount off MRP that day
+osa_pct,Availability,decimal,%,1,soft,market,Weighted on-shelf availability,On-shelf availability %,Share of dark stores with the product in stock
+category_share_mrp,Market,decimal,%,1,soft,market,Estimated category share at MRP,Category share at MRP,The product's share of category sales at MRP
+category_share_sp,Market,decimal,%,1,soft,market,Estimated category share at SP,Category share,The product's share of category sales at selling price
+market_city,Store locations,text,,1,soft,market,City column in market data when present,Market city,"City the market figures are for, when given"
+case_size,Product,integer,pcs,1,soft,sku_master,Case pack size,Case size,Units per case; orders round up to whole cases
+moq,Product,integer,pcs,1,soft,sku_master,Minimum order quantity,Minimum order quantity,Smallest order the platform accepts
+plan_category,Product,text,,1,soft,sku_master|sellin|po|custom,formatRef plan category,Product category,Category used to group SKUs in the plan

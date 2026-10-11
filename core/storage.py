@@ -231,6 +231,13 @@ class Store:
         resp = self._request("HEAD", f"{self._base}/object/authenticated/{self._bucket}/{key}")
         return resp.status_code == 200
 
+    def delete_key(self, key: str) -> None:
+        """Delete one object. Used only by the expiry job for removed raw files."""
+        check_key(key)
+        resp = self._request("DELETE", f"{self._base}/object/{self._bucket}", json={"prefixes": [key]})
+        if resp.status_code >= 300:
+            raise StorageError(f"could not delete {key}")
+
     def delete_prefix(self, prefix: str) -> int:
         """Used only by the expiry job."""
         check_key(prefix.rstrip("/") + "/x")
