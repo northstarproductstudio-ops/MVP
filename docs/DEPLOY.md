@@ -88,8 +88,12 @@ moving on. Plan on 2–3 hours the first time.
 
 1. openrouter.ai → **Keys → Create key** → `OPENROUTER_API_KEY`.
 2. Set a **credit limit** on the key: a full plan is about 300 model calls.
-3. **Privacy**: the code sends `provider.data_collection = deny`. Also turn off "allow training"
-   in your OpenRouter privacy settings.
+3. **Privacy**: the code sends `provider.data_collection` from `LLM_DATA_COLLECTION` (default
+   `deny`). With `deny`, use a paid model from a no-training provider. Free (`:free`) models are
+   only served by providers that collect data, so they need `LLM_DATA_COLLECTION=allow` **and**
+   "Allow free endpoints that train on request data" on in OpenRouter's privacy settings — test
+   data only; set it back to `deny` before any client data. Otherwise requests fail with
+   404 "No endpoints found matching your data policy".
 4. Pick `LLM_MODEL`, a model id that supports **structured outputs / JSON schema** (shown on the
    model's page). Start with one strong model; comparing 2–3 is phase 4 of the plan.
 

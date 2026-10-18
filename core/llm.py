@@ -1,6 +1,8 @@
 """One OpenRouter client shared by the import, planning and Ask agents.
 
-* model from LLM_MODEL, temperature from config, ``provider.data_collection = deny``
+* model from LLM_MODEL, temperature from config, ``provider.data_collection`` from
+  LLM_DATA_COLLECTION (default ``deny``; ``allow`` only for test data on free models,
+  whose providers all collect data)
 * JSON-schema structured output for the import and planning agents
 * one transport retry; every call is handed to a recorder that writes ``meta.agent_call``
 * the API key never appears in the recorded request
@@ -9,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -31,6 +34,16 @@ class LLMUnavailable(LLMError):
     """Transport failure or provider outage after retries."""
 
 
+def data_collection_policy() -> str:
+    """OpenRouter ``provider.data_collection`` value from LLM_DATA_COLLECTION.
+
+    ``deny`` (default) routes only to providers that do not store or train on prompts.
+    ``allow`` is needed for free models and must be used with test data only.
+    Anything else falls back to ``deny`` so a typo never weakens privacy."""
+    value = os.environ.get("LLM_DATA_COLLECTION", "deny").strip().lower()
+    return "allow" if value == "allow" else "deny"
+
+
 @dataclass
 class LLMResult:
     content: str | None
@@ -51,7 +64,12 @@ class LLMClient:
     timeout_s: float = 60.0
     recorder: Recorder | None = None
     transport_retries: int = 1
+    data_collection: str = field(default_factory=data_collection_policy)
     _http: httpx.Client | None = None
+
+    def __post_init__(self) -> None:
+        if self.data_collection == "allow":
+            log.warning("LLM_DATA_COLLECTION=allow: prompts may be stored by the provider; use test data only")
 
     def _client(self) -> httpx.Client:
         if self._http is None:
@@ -83,7 +101,7 @@ class LLMClient:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "provider": {"data_collection": "deny"},
+            "provider": {"data_collection": self.data_collection},
             "usage": {"include": True},
         }
         if max_tokens:
