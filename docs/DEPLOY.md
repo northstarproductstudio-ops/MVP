@@ -321,7 +321,14 @@ and keep the worker warm (AppSail stops idle instances after a few minutes).
 2. From the repo root: `catalyst init slate` → framework **React + Vite** → source **`web`**.
    Keep the defaults `npm install` / `npm run build`; build output is **`dist`**.
 3. `catalyst deploy slate` → note the URL → `WEB_URL`.
-4. API env var `CORS_ORIGINS=https://<WEB_URL>` → restart the API.
+4. CORS on Catalyst is answered by Catalyst's gateway, not the app. In the console:
+   **Cloud Scale → Authentication** (set up Native Catalyst Authentication → Embedded Login with
+   defaults if Whitelisting isn't shown) **→ Whitelisting → Authorized Domains → Add Domain**
+   `https://<WEB_URL>` with **CORS** on. The gateway then answers the browser's OPTIONS pre-check
+   and adds `Access-Control-Allow-Origin` to every response.
+   Then set the API env var `CORS_ORIGINS=none` and redeploy the API, so the app does **not** add a
+   second `Access-Control-Allow-Origin` header (browsers reject a duplicate). Keep real origins in
+   `CORS_ORIGINS` only for local runs, where there is no gateway.
 5. Supabase → **Authentication → URL Configuration**: Site URL = `https://<WEB_URL>`.
 
 ✅ Check: open `WEB_URL`, sign in as the planner, and land on "Import your sources".
