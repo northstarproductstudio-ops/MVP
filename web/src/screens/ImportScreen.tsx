@@ -1,150 +1,205 @@
-// MVP-01/02/03: import 1–10 files, then show processing progress per file.
+// S-02 Import (1–10 files per chat) and S-03 Processing (reading rows and proposing field storage).
 import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, Clock, FileSpreadsheet, FileUp, X } from "lucide-react";
 import { api, type Json } from "../api";
-import { bytes, Chip, fmt } from "../components/common";
+import { bytes, DATASET_STATUS, fmt } from "../components/common";
+import { Button, Empty, IconButton, Progress, StateChip } from "../components/ui";
 
 const MAX = 10;
+const OK = /\.(csv|xlsx|xlsm|xls)$/i;
+const DONE = ["parsed", "failed", "mapped", "ready", "duplicate"];
 
-export function ImportScreen({ sessionId, datasets, onProcessed }: {
+type Rejected = { name: string; size: number; reason: string };
+
+export function ImportScreen({ sessionId, datasets, onRefresh, onContinue }: {
   sessionId: string;
   datasets: Json[];
-  onProcessed: () => void;
+  onRefresh: () => Promise<void>;
+  onContinue: () => void;
 }) {
-  const [files, setFiles] = useState<File[]>([]);
   const [over, setOver] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState<File[]>([]);
+  const [rejected, setRejected] = useState<Rejected[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [tracking, setTracking] = useState<Json[]>([]);
+  const [tracking, setTracking] = useState<string[]>([]);
+  const [live, setLive] = useState<Record<string, Json>>({});
+  const [processing, setProcessing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  const existing = datasets.filter((d) => !["failed", "duplicate"].includes(d.status)).length;
-  const room = MAX - existing - files.length;
+  const used = datasets.filter((d) => !["failed", "duplicate"].includes(d.status)).length;
+  const room = MAX - used - uploading.length;
 
-  const add = (list: FileList | null) => {
+  const add = async (list: FileList | null) => {
     if (!list) return;
-    const ok = Array.from(list).filter((f) => /\.(csv|xlsx|xlsm|xls)$/i.test(f.name));
-    setFiles((cur) => [...cur, ...ok].slice(0, MAX - existing));
-  };
-
-  const start = async () => {
-    setBusy(true);
+    const all = Array.from(list);
+    const bad = all.filter((f) => !OK.test(f.name)).map((f) => ({
+      name: f.name, size: f.size,
+      reason: `Not imported — .${f.name.split(".").pop()} files are not supported. Export this as CSV or XLSX and add it again.`,
+    }));
+    const good = all.filter((f) => OK.test(f.name));
+    const take = good.slice(0, Math.max(0, room));
+    const over = good.slice(take.length).map((f) => ({ name: f.name, size: f.size, reason: `Not imported — a chat holds up to ${MAX} files.` }));
+    setRejected((r) => [...r, ...bad, ...over]);
+    if (!take.length) return;
     setError(null);
+    setUploading(take);
     try {
-      const res = await api.upload(sessionId, files);
-      setTracking(res.files);
-      setFiles([]);
+      const res = await api.upload(sessionId, take);
+      const ids = (res.files ?? []).map((f: Json) => f.dataset_id).filter(Boolean);
+      setTracking(ids);
+      setProcessing(ids.length > 0);
+      await onRefresh();
     } catch (e: any) {
-      setError(e.message);
+      setError(`Upload failed for ${take.map((f) => f.name).join(", ")}. Nothing was saved. ${e.message}`);
     } finally {
-      setBusy(false);
+      setUploading([]);
     }
   };
 
-  // poll processing progress
+  // poll reading progress for the files just uploaded
   useEffect(() => {
-    const ids = tracking.filter((t) => t.dataset_id && t.status === "uploaded").map((t) => t.dataset_id);
-    if (!ids.length) return;
+    if (!tracking.length) return;
     let stop = false;
     const tick = async () => {
-      const st = await Promise.all(ids.map((id: string) => api.importStatus(id)));
+      const st = await Promise.all(tracking.map((id) => api.importStatus(id).catch(() => null)));
       if (stop) return;
-      setTracking((cur) => cur.map((t) => ({ ...t, live: st.find((s: Json) => s.id === t.dataset_id) ?? t.live })));
-      if (st.every((s: Json) => ["parsed", "failed", "mapped", "ready"].includes(s.status))) onProcessed();
-      else setTimeout(tick, 1500);
+      setLive((cur) => ({ ...cur, ...Object.fromEntries(st.filter((s): s is Json => Boolean(s)).map((s) => [s.id, s])) }));
+      if (st.every((s) => s && DONE.includes(s.status))) {
+        await onRefresh();
+        setTracking([]);
+        if (processing && st.some((s) => s && ["parsed", "mapped", "ready"].includes(s.status))) onContinue();
+      } else setTimeout(tick, 1500);
     };
     tick();
-    return () => {
-      stop = true;
-    };
-  }, [tracking.length]); // eslint-disable-line
+    return () => { stop = true; };
+  }, [tracking.join()]); // eslint-disable-line
 
-  if (tracking.length) {
-    const done = tracking.filter((t) => ["parsed", "failed", "ready"].includes(t.live?.status)).length;
-    return (
-      <div className="col">
-        <div>
-          <h1>Processing {tracking.length} files</h1>
-          <p className="sub">Reading rows, resolving field types and proposing how each field is stored.</p>
-        </div>
-        <div className="card">
-          {tracking.map((t, i) => {
-            const s = t.live ?? {};
-            const status = t.status !== "uploaded" ? t.status : s.status ?? "queued";
-            return (
-              <div className="file" key={i}>
-                <div>
-                  <strong>{t.file_name}</strong>
-                  <div className="muted">{bytes(t.size)} {s.progress?.sheets ? `· ${s.progress.sheets.length} sheet(s)` : ""} {s.type_name ? `· ${s.type_name}` : ""}</div>
-                  {s.rows_read != null && (
-                    <div className="stats">
-                      <div className="stat"><div className="k">Rows read</div><div className="v">{fmt(s.rows_read)}</div></div>
-                      <div className="stat"><div className="k">Fields detected</div><div className="v">{fmt(s.progress?.fields_detected)}</div></div>
-                      <div className="stat"><div className="k">Header row</div><div className="v">{s.progress?.header_found ? "Found" : "–"}</div></div>
-                      <div className="stat"><div className="k">Fields proposed</div><div className="v">{fmt(s.progress?.fields_proposed)} of {fmt(s.progress?.fields_detected)}</div></div>
-                    </div>
-                  )}
-                  {(t.error || s.error) && <div className="error">{t.error || s.error}</div>}
-                </div>
-                <div>
-                  <Chip tone={status === "parsed" || status === "ready" ? "ok" : status === "failed" || status === "duplicate" ? "bad" : "info"}>
-                    {status === "parsed" ? "Complete" : status === "parsing" ? "Reading" : status === "uploaded" ? "Queued" : status}
-                  </Chip>
-                </div>
-              </div>
-            );
-          })}
-          <div className="footer">
-            <span className="muted">File {Math.min(done + 1, tracking.length)} of {tracking.length} · preparing the proposed mapping</span>
-            <button className="btn" onClick={onProcessed}>Go to mapping</button>
-          </div>
-        </div>
-      </div>
-    );
+  const rows = datasets.map((d) => ({ ...d, ...(live[d.id] ?? {}) }));
+  if (processing && tracking.length) {
+    return <Processing files={rows.filter((d) => tracking.includes(d.id))} onCancel={() => setProcessing(false)} />;
   }
 
+  const ready = rows.filter((d) => ["parsed", "mapped", "ready"].includes(d.status)).length;
+  const readingN = rows.filter((d) => ["uploaded", "parsing"].includes(d.status)).length + uploading.length;
+  const attention = rows.filter((d) => ["failed", "duplicate"].includes(d.status)).length + rejected.length;
+  const total = rows.length + uploading.length + rejected.length;
+
   return (
-    <div className="col">
-      <div>
-        <h1>Import your sources</h1>
-        <p className="sub">Add between 1 and 10 files of sales, inventory, purchase orders or market data. Any mix works — plan Blinkit alone with only Blinkit files.</p>
-      </div>
-      <div
-        className={`drop ${files.length ? "compact" : ""} ${over ? "over" : ""}`}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); add(e.dataTransfer.files); }}
-      >
-        <div>
-          <h2>{files.length ? "Drop more files here" : "Drop files here"}</h2>
-          <p className="muted">{files.length ? `${Math.max(0, room)} more can be added.` : "or choose them from your computer"}</p>
-        </div>
-        <div>
-          <button className="btn" onClick={() => input.current?.click()} disabled={room <= 0}>Add files</button>
-          <input ref={input} type="file" multiple hidden accept=".csv,.xlsx,.xlsm,.xls" onChange={(e) => add(e.target.files)} />
-        </div>
-        {!files.length && <p className="muted" style={{ marginTop: 16 }}>CSV, XLSX and other tabular files.</p>}
-      </div>
-      {files.length > 0 && (
-        <div className="card">
-          <div className="row between" style={{ padding: "12px 20px" }}>
-            <h2>Files to process</h2>
-            <span className="muted">{files.length + existing} of {MAX}</span>
+    <>
+      <main className="content">
+        <div className="inner">
+          <div className="stack">
+            <h1>Import sales files</h1>
+            <p className="muted">Add platform sales exports from Blinkit, Zepto or BigBasket, plus any inventory, purchase-order or market files. Each file is read, then you map its fields.</p>
           </div>
-          {files.map((f, i) => (
-            <div className="file" key={i}>
-              <div><strong>{f.name}</strong><div className="muted">{bytes(f.size)} · not read yet</div></div>
-              <div className="row"><Chip>Queued</Chip><button className="btn ghost small" onClick={() => setFiles(files.filter((_, j) => j !== i))}>Remove</button></div>
+          <div className={`drop ${over ? "over" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+            onDragLeave={() => setOver(false)}
+            onDrop={(e) => { e.preventDefault(); setOver(false); add(e.dataTransfer.files); }}>
+            <FileUp size={16} aria-hidden="true" />
+            <span>Drop sales exports here, or{" "}
+              <button type="button" className="linkbtn" onClick={() => input.current?.click()} disabled={room <= 0}>choose files</button>
+            </span>
+            <span className="t-caption muted">CSV or XLSX · {used} of {MAX} files used in this chat</span>
+            <input ref={input} type="file" multiple hidden accept=".csv,.xlsx,.xlsm,.xls" onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+          </div>
+          {error && <div className="banner crit" role="alert"><span className="grow">{error}</span></div>}
+          <div className="row between" style={{ alignItems: "baseline" }}>
+            <h2>Files in this chat</h2>
+            <span className="t-small muted">Showing {total} of {total} files</span>
+          </div>
+          {total === 0 ? (
+            <div className="card"><Empty text="No files yet. Add the platform exports you want to plan from." action="Choose files" onAction={() => input.current?.click()} /></div>
+          ) : (
+            <div className="stack g8">
+              {rows.map((d) => <FileRow key={d.id} d={d} />)}
+              {uploading.map((f) => (
+                <FileRow key={`u-${f.name}`} d={{ file_name: f.name, file_size: f.size, status: "uploaded" }} />
+              ))}
+              {rejected.map((r, i) => (
+                <FileRow key={`r-${i}`} d={{ file_name: r.name, file_size: r.size, status: "failed", error: r.reason }}
+                  onRemove={() => setRejected((x) => x.filter((_, j) => j !== i))} />
+              ))}
             </div>
-          ))}
+          )}
         </div>
-      )}
-      {error && <div className="notice bad">{error}</div>}
-      <div className="card footer">
-        <span className="muted">{files.length + existing} of {MAX} files added. {files.length ? "Processing reads every file and proposes how its fields are stored." : "Add at least one file to continue."}</span>
-        <div className="row">
-          {existing > 0 && !files.length && <button className="btn" onClick={onProcessed}>Continue with {existing} imported</button>}
-          <button className="btn primary" onClick={start} disabled={!files.length || busy}>{busy ? "Uploading…" : "Start process"}</button>
-        </div>
+      </main>
+      <footer className="footbar">
+        <span className="muted">{ready} of {total} files ready{readingN ? ` · ${readingN} still reading` : ""}{attention ? ` · ${attention} need attention` : ""}</span>
+        <Button variant="primary" iconRight={ArrowRight} disabled={!ready} reason="Continue to mapping once a file is ready." onClick={onContinue}>
+          Continue to mapping · {ready}
+        </Button>
+      </footer>
+    </>
+  );
+}
+
+function FileRow({ d, onRemove }: { d: Json; onRemove?: () => void }) {
+  const [label, tone] = DATASET_STATUS[d.status] ?? [d.status, "neutral"];
+  const reading = ["uploaded", "parsing"].includes(d.status);
+  const meta = [bytes(d.file_size), d.rows_read != null ? `${fmt(d.rows_read)} rows${reading ? " read" : ""}` : null].filter(Boolean).join(" · ");
+  const reason = d.status === "failed" ? d.error || "Not imported — this file could not be read." : d.status === "duplicate" ? d.error || "Already imported in this workspace." : null;
+  return (
+    <div className="filecard">
+      <div className="line1">
+        <FileSpreadsheet size={16} aria-hidden="true" />
+        <span className="stack grow" style={{ gap: 0 }}><span className="strong">{d.file_name}</span><span className="t-caption muted">{meta || "Not read yet"}</span></span>
+        <span className="chipcol"><StateChip tone={tone}>{label}</StateChip></span>
+        {onRemove && <IconButton icon={X} label={`Remove ${d.file_name}`} size="sm" onClick={onRemove} />}
       </div>
+      {reason && <span className="sub t-small">{reason}</span>}
+      {reading && <span className="sub"><Progress pct={progressOf(d)} thin label={d.file_name} /></span>}
     </div>
+  );
+}
+
+function progressOf(d: Json): number {
+  if (DONE.includes(d.status)) return 100;
+  const p = d.progress ?? {};
+  if (p.fields_detected) return 40 + 60 * ((p.fields_proposed ?? 0) / p.fields_detected);
+  if (p.header_found) return 30;
+  return d.status === "parsing" ? 15 : 4;
+}
+
+function Processing({ files, onCancel }: { files: Json[]; onCancel: () => void }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setSlow(true), 10000); return () => clearTimeout(t); }, []);
+  const detected = files.reduce((s, f) => s + (f.progress?.fields_detected ?? 0), 0);
+  const proposed = files.reduce((s, f) => s + (DONE.includes(f.status) ? f.progress?.fields_detected ?? 0 : f.progress?.fields_proposed ?? 0), 0);
+  return (
+    <main className="content centered">
+      <section aria-labelledby="proc-t" className="card container" style={{ width: 640, maxWidth: "100%", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="stack">
+          <h1 id="proc-t">Reading your files</h1>
+          <p className="muted">Reading rows, resolving field types and proposing how each field is stored.</p>
+        </div>
+        {slow && (
+          <div role="status" className="banner info">
+            <Clock size={14} aria-hidden="true" />
+            <span>Still working — large files take a little longer. You can leave this screen open; reading carries on if you switch to another chat, and the mapping opens as soon as it finishes.</span>
+          </div>
+        )}
+        <ul className="stack g12" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {files.map((f) => {
+            const done = DONE.includes(f.status);
+            const label = f.status === "failed" ? "Reading stopped" : done ? `Done · ${fmt(f.rows_read)} rows` : f.rows_read != null ? `${fmt(f.rows_read)} rows read` : "Queued";
+            return (
+              <li key={f.id} className="stack" style={{ gap: 6 }}>
+                <span className="row between">
+                  <span className="strong">{f.file_name}</span>
+                  <span className="t-small muted row" style={{ gap: 6 }}>{done && f.status !== "failed" && <StateChip tone="good">{""}</StateChip>}{label}</span>
+                </span>
+                <Progress pct={progressOf(f)} label={f.file_name} />
+                {f.status === "failed" && <span className="t-small risk">Reading stopped for {f.file_name}. Your other files are fine. {f.error}</span>}
+              </li>
+            );
+          })}
+        </ul>
+        <div className="row between" style={{ paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+          <span aria-live="polite">Fields resolved: <span className="strong">{detected ? `${fmt(proposed)} of ${fmt(detected)}` : "—"}</span></span>
+          <Button icon={ArrowLeft} onClick={onCancel}>Cancel and keep files</Button>
+        </div>
+        <span className="t-caption muted">Cancel returns to Import with every file intact.</span>
+      </section>
+    </main>
   );
 }
