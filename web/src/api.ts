@@ -7,14 +7,20 @@ export type Json = Record<string, any>;
 
 async function req<T = Json>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getToken();
-  const res = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      ...(init.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init.headers || {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, {
+      ...init,
+      headers: {
+        ...(init.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init.headers || {}),
+      },
+    });
+  } catch {
+    // the browser hides the reason: API down, wrong VITE_API_URL, or blocked by CORS
+    throw new Error(`Can't reach the planning service at ${API}. Check that it is running and that this site is allowed to call it.`);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
