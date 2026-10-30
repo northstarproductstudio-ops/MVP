@@ -24,6 +24,17 @@ export function MappingScreen({ datasets, onSaved, onCrosswalk, onImport, onSave
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [jump, setJump] = useState<string | null>(null);
+
+  // After the footer link picks a field, bring its row into view once that file has rendered.
+  useEffect(() => {
+    if (!jump) return;
+    const tr = document.querySelector<HTMLElement>(`tr[data-key="${CSS.escape(jump)}"]`);
+    if (!tr) return;
+    tr.scrollIntoView({ block: "center", behavior: "smooth" });
+    tr.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    setJump(null);
+  }, [jump, file, rows]);
 
   const load = () => {
     setLoadErr(null);
@@ -100,6 +111,21 @@ export function MappingScreen({ datasets, onSaved, onCrosswalk, onImport, onSave
   const allConf = new Set(rows.filter((r) => conflicts.has(r.key)).map((r) => `${r.did}|${r.sheet}|${r.variable}`)).size;
   const selected = mine.find((r) => r.key === sel) ?? mine[0];
   const p = maps[cur.id]?.proposal;
+
+  // Fields blocking the save, in file then row order. The footer link walks them from the
+  // current file onwards, one per click.
+  const issues = rows.filter((r) => ["needs_decision", "conflict"].includes(stateOf(r)));
+  const order = parsed.map((d) => d.id);
+  const goToIssue = () => {
+    if (!issues.length) return;
+    const at = issues.findIndex((r) => r.key === sel);
+    const next = at >= 0 ? issues[(at + 1) % issues.length]
+      : issues.find((r) => order.indexOf(r.did) >= order.indexOf(cur.id)) ?? issues[0];
+    setFile(next.did);
+    setSel(next.key);
+    setQ("");
+    setJump(next.key);
+  };
 
   const save = async () => {
     setSaving(true);
@@ -222,7 +248,8 @@ export function MappingScreen({ datasets, onSaved, onCrosswalk, onImport, onSave
         </div>
       </main>
       <footer className="footbar end">
-        {blockReason && <span id="cont-reason" className="muted">{blockReason}</span>}
+        {blockReason && <button type="button" id="cont-reason" className="linkbtn" onClick={goToIssue}
+          title={issues.length > 1 ? "Go to the next field that needs a decision" : "Go to the field that needs a decision"}>{blockReason}</button>}
         <Button variant="primary" iconRight={ArrowRight} busy={saving} disabled={Boolean(blockReason)} describedBy={blockReason ? "cont-reason" : undefined} onClick={save}>Save and continue to plan</Button>
       </footer>
     </>
@@ -241,7 +268,7 @@ function MapRow({ r, state, others, selected, onSelect, update, varInfo }: {
   const other = others[0];
   const ignore = () => update(r.key, { state: "not_stored" });
   return (
-    <tr onClick={onSelect} className="clickable" style={{ background: bg }} aria-selected={selected}>
+    <tr data-key={r.key} onClick={onSelect} className="clickable" style={{ background: bg }} aria-selected={selected}>
       <td className="strong" style={{ whiteSpace: "nowrap" }}>
         <span className="row" style={{ gap: 6 }}>{selected && <span className="selmark" aria-hidden="true" />}
           <span style={{ textDecoration: ignored ? "line-through" : undefined, color: ignored ? "var(--text-secondary)" : undefined }}>{r.source_field}</span></span>
