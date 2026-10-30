@@ -1,13 +1,14 @@
 // Global shell: 232/64 left nav, 56 top bar with breadcrumb, 48 step rail on Import, Map, Plan.
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  ArrowLeftRight, Check, CircleHelp, CircleUser, Database, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, Plus, Sun,
+  ArrowLeftRight, Check, CircleHelp, CircleUser, Database, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, Plus,
+  Settings, Sun,
 } from "lucide-react";
 import type { Json } from "../api";
 import type { Stage } from "./common";
 import { IconButton } from "./ui";
 
-export type NavId = "chats" | "saved" | "crosswalk";
+export type NavId = "chats" | "saved" | "crosswalk" | "settings";
 
 export function useTheme(): ["light" | "dark", () => void] {
   const read = () => {
@@ -49,6 +50,7 @@ export function Sidebar({ active, workspace, sessions, currentSid, crosswalkCoun
         <NavItem icon={MessageSquare} label="Chats" active={active === "chats"} onClick={() => onNav("chats")} />
         <NavItem icon={Database} label="Saved data" active={active === "saved"} onClick={() => onNav("saved")} />
         <NavItem icon={ArrowLeftRight} label="Crosswalk" active={active === "crosswalk"} count={crosswalkCount} onClick={() => onNav("crosswalk")} />
+        <NavItem icon={Settings} label="Settings" active={active === "settings"} onClick={() => onNav("settings")} />
       </div>
       {!collapsed && (
         <div className="stack" style={{ gap: 4, minHeight: 0, overflow: "auto" }}>

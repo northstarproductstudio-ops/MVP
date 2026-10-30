@@ -13,6 +13,7 @@ import { ImportScreen } from "./screens/ImportScreen";
 import { MappingScreen } from "./screens/MappingScreen";
 import { ReportView } from "./screens/ReportView";
 import { SavedDataScreen } from "./screens/SavedDataScreen";
+import { SettingsScreen } from "./screens/SettingsScreen";
 
 const WORKSPACE = (import.meta.env.VITE_WORKSPACE_NAME as string) || "Workspace";
 
@@ -21,6 +22,7 @@ type Route =
   | { page: "report"; sid: string; rid: string }
   | { page: "saved" }
   | { page: "crosswalk" }
+  | { page: "settings" }
   | { page: "home" };
 
 function parse(): Route {
@@ -31,6 +33,7 @@ function parse(): Route {
   if (m) return { page: "chat", sid: m[1], stage: m[2] as Stage };
   if (h.startsWith("#/saved")) return { page: "saved" };
   if (h.startsWith("#/crosswalk")) return { page: "crosswalk" };
+  if (h.startsWith("#/settings")) return { page: "settings" };
   return { page: "home" };
 }
 
@@ -168,16 +171,18 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
       onEditLine={(text) => { setDraft(text); go(`#/s/${route.sid}/ask`); }} />;
   }
 
-  const active: NavId = route.page === "saved" ? "saved" : route.page === "crosswalk" ? "crosswalk" : "chats";
+  const active: NavId = route.page === "saved" ? "saved" : route.page === "crosswalk" ? "crosswalk"
+    : route.page === "settings" ? "settings" : "chats";
   const datasets: Json[] = session?.datasets ?? [];
   const here = route.page === "saved" ? "Saved data" : route.page === "crosswalk" ? "Crosswalk"
-    : session ? (session.title || "New chat") : "Chat";
+    : route.page === "settings" ? "Settings" : session ? (session.title || "New chat") : "Chat";
 
   let body;
   if (error) body = <div className="content"><div className="inner"><div className="card"><ErrorBlank text={`This page didn’t load. ${error}`} onAction={() => location.reload()} /></div></div></div>;
   else if (route.page === "saved") body = <SavedDataScreen sessions={sessions} onOpen={(id, st) => go(`#/s/${id}/${st}`)} onNewChat={newChat}
     onPlan={(id) => { setPending("Create a demand plan for next month"); go(`#/s/${id}/ask`); }} />;
   else if (route.page === "crosswalk") body = <CrosswalkScreen onChanged={loadCw} />;
+  else if (route.page === "settings") body = <SettingsScreen />;
   else if (route.page !== "chat" || !session) body = <div className="content"><div className="inner"><div className="card"><Loading text="Restoring this chat: messages, cards and where you were." /></div></div></div>;
   else {
     const stage = route.stage;
@@ -213,6 +218,7 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
         onNav={(n) => {
           if (n === "saved") go("#/saved");
           else if (n === "crosswalk") go("#/crosswalk");
+          else if (n === "settings") go("#/settings");
           else go(sessions[0] ? `#/s/${sessions[0].id}/ask` : "#/");
         }}
         onChat={(id) => go(`#/s/${id}/ask`)} onNewChat={newChat} theme={theme} onTheme={toggleTheme}

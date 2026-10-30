@@ -215,6 +215,17 @@ p { margin: 0; }
 .field.block { display: flex; width: 100%; }
 input[type="radio"] { accent-color: var(--primary); }
 input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+/* on/off switch: a checkbox drawn as a track and thumb */
+.switch { position: relative; display: inline-flex; flex: none; width: 36px; height: 20px; margin-top: 1px; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 1; }
+.switch .track { width: 100%; height: 100%; border-radius: 999px; background: var(--line-strong); transition: background-color var(--dur-fast); }
+.switch .thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform var(--dur-fast); }
+.switch input:checked ~ .track { background: var(--primary); }
+.switch input:checked ~ .thumb { transform: translateX(16px); }
+.switch input:focus-visible ~ .track { outline: 2px solid var(--primary); outline-offset: 2px; }
+.switch input:disabled { cursor: default; }
+.switch input:disabled ~ .track { opacity: 0.5; }
 label.check { display: inline-flex; align-items: center; gap: 6px; }
 
 /* surfaces */

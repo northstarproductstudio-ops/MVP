@@ -66,6 +66,9 @@ export const api = {
     fd.append("file", file, file.name);
     return req("/crosswalk", { method: "POST", body: fd });
   },
+  settings: () => req("/settings"),
+  setPlanningAgent: (enabled: boolean) =>
+    req("/settings/planning-agent", { method: "PUT", body: JSON.stringify({ enabled }) }),
 };
 
 export async function download(path: string, filename: string) {

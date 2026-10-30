@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from api.deps import pool, settings
 from api.routers import crosswalk, imports, runs, sessions, system
+from api.routers import settings as settings_routes
 from core.db import close_pools
 from core.logging import configure_logging, get_logger, init_sentry
 
@@ -52,5 +53,5 @@ async def unhandled(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse({"detail": "Something went wrong; it has been logged."}, status_code=500)
 
 
-for r in (system.router, sessions.router, imports.router, crosswalk.router, runs.router):
+for r in (system.router, sessions.router, imports.router, crosswalk.router, runs.router, settings_routes.router):
     app.include_router(r)
