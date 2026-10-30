@@ -1,16 +1,19 @@
 // S-04: confirm how each file's fields are stored. One file at a time; saving stores every file.
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeftRight, ArrowRight, ChevronDown, FileSpreadsheet } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowLeftRight, ArrowRight, ChevronDown, Database, FileSpreadsheet, FileUp, OctagonX, RotateCcw, TriangleAlert } from "lucide-react";
 import { api, type Json } from "../api";
-import { fmt, STATE_LABEL } from "../components/common";
-import { Banner, Button, Empty, ErrorBlank, Loading, NoResults, SearchField, SelectField, StateChip } from "../components/ui";
+import { DATASET_STATUS, fmt, STATE_LABEL } from "../components/common";
+import { Banner, Button, ErrorBlank, Loading, NoResults, Progress, SearchField, SelectField, StateChip } from "../components/ui";
 
 type Row = Json & { did: string; file: string; key: string; n: number; orig: Json };
 
-export function MappingScreen({ datasets, onSaved, onCrosswalk }: {
+const MAPPABLE = ["parsed", "mapped", "ready"];
+
+export function MappingScreen({ datasets, onSaved, onCrosswalk, onImport, onSavedData, onRefresh }: {
   datasets: Json[]; onSaved: () => Promise<void> | void; onCrosswalk: () => void;
+  onImport: () => void; onSavedData: () => void; onRefresh: () => Promise<void>;
 }) {
-  const parsed = datasets.filter((d) => ["parsed", "mapped", "ready"].includes(d.status));
+  const parsed = datasets.filter((d) => MAPPABLE.includes(d.status));
   const ids = parsed.map((d) => d.id).join();
   const [maps, setMaps] = useState<Record<string, Json>>({});
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -36,7 +39,7 @@ export function MappingScreen({ datasets, onSaved, onCrosswalk }: {
       }
       setMaps(out);
       setRows(all);
-      setFile((cur) => cur || parsed[0]?.id || "");
+      setFile((cur) => cur || parsed[0]?.id || datasets[0]?.id || "");
     })().catch((e) => setLoadErr(e.message));
   };
   useEffect(load, [ids]); // eslint-disable-line
@@ -65,14 +68,30 @@ export function MappingScreen({ datasets, onSaved, onCrosswalk }: {
     setRows((rs) => (rs ?? []).map((r) => (r.key === key ? { ...r, ...patch } : r)));
   };
 
-  if (!parsed.length) {
-    return <main className="content"><div className="inner"><h1>Map fields</h1><div className="card"><Empty text="Files appear here once they have been read." /></div></div></main>;
+  if (!datasets.length) {
+    return (
+      <main className="content"><div className="inner"><h1>Map fields</h1>
+        <div className="card">
+          <div className="blank">
+            <span>No files in this chat yet. Add the platform exports you want to plan from.</span>
+            <span className="t-small muted">Files imported in other chats are listed in Saved data.</span>
+            <span className="row"><Button variant="primary" size="sm" icon={FileUp} onClick={onImport}>Go to Import</Button>
+              <Button size="sm" icon={Database} onClick={onSavedData}>Open Saved data</Button></span>
+          </div>
+        </div>
+      </div></main>
+    );
   }
-  if (loadErr) return <main className="content"><div className="inner"><h1>Map fields</h1><div className="card"><ErrorBlank text={`The mapping didn’t load. Your file and saved mapping are safe. ${loadErr}`} onAction={load} /></div></div></main>;
-  if (!rows) return <main className="content"><div className="inner"><h1>Map fields</h1><div className="card"><Loading text={`Loading fields for ${parsed[0].file_name}.`} rows={6} /></div></div></main>;
 
-  const fileIdx = Math.max(0, parsed.findIndex((d) => d.id === file));
-  const cur = parsed[fileIdx];
+  const cur = datasets.find((d) => d.id === file) ?? parsed[0] ?? datasets[0];
+  const picker = <FilePicker files={datasets} current={cur} onPick={(id) => { setFile(id); setSel(null); setQ(""); }} />;
+  if (!MAPPABLE.includes(cur.status)) {
+    return <main className="content"><div className="inner"><h1>Map fields</h1><div className="row">{picker}</div>
+      <FileState d={cur} onImport={onImport} onRefresh={onRefresh} /></div></main>;
+  }
+  if (loadErr) return <main className="content"><div className="inner"><h1>Map fields</h1><div className="row">{picker}</div><div className="card"><ErrorBlank text={`The mapping for ${cur.file_name} didn’t load. Your file and any saved mapping are safe. ${loadErr}`} onAction={load} details={loadErr} /></div></div></main>;
+  if (!rows) return <main className="content"><div className="inner"><h1>Map fields</h1><div className="row">{picker}</div><div className="card"><Loading text={`Loading fields for ${cur.file_name}.`} rows={6} /></div></div></main>;
+
   const mine = rows.filter((r) => r.did === cur.id);
   const shown = mine.filter((r) => !q || `${r.source_field} ${r.variable ?? ""}`.toLowerCase().includes(q.toLowerCase()));
   const stateOf = (r: Row) => (conflicts.has(r.key) ? "conflict" : r.state);
@@ -115,14 +134,7 @@ export function MappingScreen({ datasets, onSaved, onCrosswalk }: {
             <div className="stack">
               <h1>Map fields</h1>
               <div className="row wrap muted" style={{ gap: 12 }}>
-                <label className="field sm" style={{ width: "auto", color: "var(--text)" }}>
-                  <span className="sr-only">File</span>
-                  <FileSpreadsheet size={14} aria-hidden="true" />
-                  <select value={cur.id} onChange={(e) => { setFile(e.target.value); setSel(null); }} className="t-small strong">
-                    {parsed.map((d, i) => <option key={d.id} value={d.id}>{d.file_name} · file {i + 1} of {parsed.length}</option>)}
-                  </select>
-                  <ChevronDown className="chev" size={14} aria-hidden="true" />
-                </label>
+                {picker}
                 <span>{count(mine, "needs_decision")} needs a decision · {new Set(mine.filter((r) => conflicts.has(r.key)).map((r) => `${r.sheet}|${r.variable}`)).size} conflict · {count(mine, "proposed")} proposed · {count(mine, "confirmed")} confirmed · {count(mine, "custom")} custom · {count(mine, "not_stored")} ignored</span>
               </div>
             </div>
@@ -268,5 +280,74 @@ function MapRow({ r, state, others, selected, onSelect, update, varInfo }: {
         </span>
       </td>
     </tr>
+  );
+}
+
+// The S-04 file switcher: every file in the chat, with its status, one at a time.
+function FilePicker({ files, current, onPick }: { files: Json[]; current: Json; onPick: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [open]);
+  const idx = files.findIndex((d) => d.id === current.id);
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button type="button" className="btn sm" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} style={{ background: "var(--surface)" }}>
+        <FileSpreadsheet size={14} aria-hidden="true" />{current.file_name} · file {idx + 1} of {files.length}<ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="popover" role="listbox" aria-label="Files in this chat" style={{ top: 34, left: 0, width: 520 }}>
+          <span className="t-caption muted" style={{ padding: "4px 8px" }}>Files in this chat · {files.length}</span>
+          {files.map((d) => {
+            const [label, tone] = DATASET_STATUS[d.status] ?? [d.status, "neutral"];
+            return (
+              <button key={d.id} type="button" role="option" aria-selected={d.id === current.id} className="menuitem"
+                style={d.id === current.id ? { background: "var(--soft)" } : undefined} onClick={() => { onPick(d.id); setOpen(false); }}>
+                <FileSpreadsheet size={14} aria-hidden="true" className="muted" />
+                <span className="stack grow" style={{ gap: 0 }}>
+                  <span className={d.id === current.id ? "strong" : undefined} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.file_name}</span>
+                  <span className="t-caption muted">{d.rows_read != null ? `${fmt(d.rows_read)} rows` : "Not read yet"}</span>
+                </span>
+                <StateChip tone={tone}>{label}</StateChip>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// S-04 states for a file that can't be mapped yet: still being read, or not imported.
+function FileState({ d, onImport, onRefresh }: { d: Json; onImport: () => void; onRefresh: () => Promise<void> }) {
+  const [checking, setChecking] = useState(false);
+  if (d.status === "failed" || d.status === "duplicate") {
+    const dup = d.status === "duplicate";
+    return (
+      <div className="card"><div className="blank" role="alert" style={{ gap: 10 }}>
+        {dup ? <TriangleAlert size={16} className="risk" aria-hidden="true" /> : <OctagonX size={16} className="risk" aria-hidden="true" />}
+        <span className="strong">{dup ? `${d.file_name} was already imported.` : `${d.file_name} was not imported.`}</span>
+        <span className="t-small muted">{d.error || (dup ? "Its rows are already stored from the earlier import." : "This file could not be read.")} There is nothing to map in it.</span>
+        <Button size="sm" icon={ArrowLeft} onClick={onImport}>Back to Import</Button>
+      </div></div>
+    );
+  }
+  const p = d.progress ?? {};
+  const pct = p.fields_detected ? 40 + 60 * ((p.fields_proposed ?? 0) / p.fields_detected) : p.header_found ? 30 : d.status === "parsing" ? 15 : 4;
+  return (
+    <div className="card"><div className="blank" role="status" style={{ gap: 10 }}>
+      <span className="spinner md muted" aria-hidden="true" />
+      <span>This file is still being read. The mapping opens as soon as it finishes.</span>
+      <span style={{ width: 240 }}><Progress pct={pct} label={d.file_name} /></span>
+      <span className="t-small muted">{d.rows_read != null ? `${fmt(d.rows_read)} rows read` : "Waiting to start"}</span>
+      <Button size="sm" icon={RotateCcw} busy={checking} onClick={async () => { setChecking(true); try { await onRefresh(); } finally { setChecking(false); } }}>Check again</Button>
+    </div></div>
   );
 }

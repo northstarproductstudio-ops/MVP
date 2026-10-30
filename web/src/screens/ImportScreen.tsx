@@ -64,9 +64,10 @@ export function ImportScreen({ sessionId, datasets, onRefresh, onContinue }: {
       if (stop) return;
       setLive((cur) => ({ ...cur, ...Object.fromEntries(st.filter((s): s is Json => Boolean(s)).map((s) => [s.id, s])) }));
       if (st.every((s) => s && DONE.includes(s.status))) {
+        // reading finished: back to the file list; mapping opens only from "Continue to mapping"
         await onRefresh();
         setTracking([]);
-        if (processing && st.some((s) => s && ["parsed", "mapped", "ready"].includes(s.status))) onContinue();
+        setProcessing(false);
       } else setTimeout(tick, 1500);
     };
     tick();

@@ -198,6 +198,7 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
         {rail}
         {stage === "import" && <ImportScreen sessionId={session.id} datasets={datasets} onRefresh={refresh} onContinue={() => go(`#/s/${sid}/map`)} />}
         {stage === "map" && <MappingScreen datasets={datasets} onCrosswalk={() => go("#/crosswalk")}
+          onImport={() => go(`#/s/${sid}/import`)} onSavedData={() => go("#/saved")} onRefresh={refresh}
           onSaved={async () => { await refresh(); loadCw(); go(`#/s/${sid}/ask`); }} />}
         {stage === "ask" && <AskScreen session={session} crosswalkCount={cwCount} pendingQuestion={pending} draft={draft}
           onConsumed={() => { setPending(null); setDraft(null); }} onOpenReport={(rid) => go(`#/s/${sid}/report/${rid}`)}
