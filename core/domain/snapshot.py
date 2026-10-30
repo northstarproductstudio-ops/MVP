@@ -70,6 +70,7 @@ def build_snapshot(
     auto_accept: float = 0.9,
     review_min: float = 0.75,
     draft_crosswalk: bool = True,
+    tie_margin: float = 0.01,
 ) -> Snapshot:
     tables = {t: dedupe(data.get(t, []), t) for t in DATA_TABLES}
     sm = conform(sku_master, "sku_master") if sku_master is not None and not sku_master.empty \
@@ -97,7 +98,7 @@ def build_snapshot(
     if draft_crosswalk:
         items = er.platform_items(tables["po_line"], tables["stock_snapshot"], tables["market_daily"])
         refs = er.sku_refs(sellin, sm, strip_tokens or [])
-        drafted = er.build_crosswalk(items, refs, cw, strip_tokens or [], auto_accept, review_min)
+        drafted = er.build_crosswalk(items, refs, cw, strip_tokens or [], auto_accept, review_min, tie_margin)
         if not drafted.empty:
             cw = conform(drafted, "sku_crosswalk").assign(
                 proposed_sku=drafted.get("proposed_sku", pd.Series([None] * len(drafted))).values)

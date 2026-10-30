@@ -13,6 +13,7 @@ from core.domain.reports import (
     current_lines,
     export_plan_xlsx,
     export_reasoning_xlsx,
+    history_actuals,
     overview_facts,
     reasoning_rows,
     template_overview,
@@ -125,6 +126,18 @@ def test_exports_open(local_run, plan_lines, tmp_path):
     assert not any(isinstance(c.value, str) and c.value.startswith("=") for row in ws.iter_rows() for c in row)
     r = export_reasoning_xlsx(reasoning_rows(plan_lines, 0), meta)
     assert len(r) > 1000
+
+    # the API builds the report's history from the run snapshot: same numbers as the pipeline,
+    # internal customers excluded, every line with a resolved city
+    sellin = local_run.ctx.tables["sellin_line"]
+    act = history_actuals(sellin, pd.Timestamp("2026-11-01"), 3, ["invoiced", "confirmed"])
+    want = hist.groupby(["sku_code", "city", "month"])["q"].sum()
+    pd.testing.assert_series_equal(act.set_index(["sku_code", "city", "month"])["q"].sort_index().astype(float),
+                                   want.sort_index().astype(float))
+    assert act["city"].notna().all() and sellin["is_internal"].any()
+    as_text = sellin.assign(is_internal=sellin["is_internal"].map(str))  # Parquet may round-trip it as text
+    assert history_actuals(as_text, pd.Timestamp("2026-11-01"), 3, ["invoiced", "confirmed"])["q"].sum() \
+        == act["q"].sum()
     facts = overview_facts(plan_lines, factors, 1000, "2026-11-01", 0, [])
     assert "reasoning report" in template_overview(facts)
     assert json.dumps(facts)

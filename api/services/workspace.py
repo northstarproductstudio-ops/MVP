@@ -34,12 +34,14 @@ async def snapshot_row(cur: psycopg.AsyncCursor[Any], session_id: str) -> dict[s
     return dict(r) if r else None
 
 
+def snapshot_table(store: Store, company_id: str, snap: dict[str, Any], name: str) -> pd.DataFrame:
+    """One table of a snapshot (``snap``: id, session_id, table_hashes)."""
+    key = snapshot_key(company_id, snap["session_id"], snap["id"], name)
+    return read_parquet_file(store.get_parquet(key, snap["table_hashes"].get(name)))
+
+
 def _load_frames(store: Store, company_id: str, snap: dict[str, Any]) -> dict[str, pd.DataFrame]:
-    frames = {}
-    for name in DATA_TABLES + MAP_TABLES:
-        key = snapshot_key(company_id, snap["session_id"], snap["id"], name)
-        frames[name] = read_parquet_file(store.get_parquet(key, snap["table_hashes"].get(name)))
-    return frames
+    return {name: snapshot_table(store, company_id, snap, name) for name in DATA_TABLES + MAP_TABLES}
 
 
 async def open_workspace(snap: dict[str, Any] | None, store: Store, company_id: str,

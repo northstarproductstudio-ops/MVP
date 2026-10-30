@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
 from core.domain import entity_resolution as er
@@ -54,6 +56,18 @@ def test_crosswalk_requires_equal_pack_and_respects_confirmed():
     assert cw.loc["u1", "sku_code"] == "CHCCSA48" and cw.loc["u1", "match_method"] == "auto"
     assert cw.loc["u2", "match_method"] == "unmatched"
     assert cw.loc["u3", "match_method"] == "manual"  # confirmed rows are never overwritten
+
+
+def test_same_name_and_pack_goes_to_review_not_auto():
+    strip = ["The Select Aisle", "TSA"]
+    name = "The Select Aisle Dutch Processed Cocoa Powder 250 g"
+    refs = [er.SkuRef(s, name, er.normalise_name(name, strip), 250, None) for s in ("CHCOSA01", "CHCOSA02")]
+    items = pd.DataFrame([{"platform": "blinkit", "platform_item_id": "10523400", "platform_name": name, "ean": None}])
+    row = er.build_crosswalk(items, refs, None, strip, 0.9, 0.75).iloc[0]
+    assert row["match_method"] == "review" and row["sku_code"] is None
+    assert {c["sku_code"] for c in json.loads(row["candidates"])} == {"CHCOSA01", "CHCOSA02"}
+    _, _, method, _ = er.match_item(name, None, refs, strip)
+    assert method == "tie"
 
 
 def test_ean_match_wins():

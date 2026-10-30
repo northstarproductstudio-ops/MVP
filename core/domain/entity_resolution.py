@@ -162,8 +162,10 @@ def sku_refs(sellin: pd.DataFrame, sku_master: pd.DataFrame, strip_tokens: list[
     return [SkuRef(s, n, normalise_name(n, strip_tokens), parse_pack(n), eans.get(s)) for s, n in sorted(pairs)]
 
 
-def match_item(platform_name: str, ean: str | None, refs: list[SkuRef], strip_tokens: list[str]
-               ) -> tuple[str | None, float, str, list[dict[str, Any]]]:
+def match_item(platform_name: str, ean: str | None, refs: list[SkuRef], strip_tokens: list[str],
+               tie_margin: float = 0.01) -> tuple[str | None, float, str, list[dict[str, Any]]]:
+    """Best SKU for a platform item. Method ``tie`` when the runner-up scores within
+    ``tie_margin`` of the top (e.g. two SKUs with the same name and pack): never auto-accepted."""
     if ean:
         for r in refs:
             if r.ean and r.ean == ean:
@@ -187,11 +189,14 @@ def match_item(platform_name: str, ean: str | None, refs: list[SkuRef], strip_to
     if not scored:
         return None, 0.0, "unmatched", []
     top = scored[0][1]
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < tie_margin:
+        return top, round(scored[0][0], 4), "tie", cands
     return top, round(scored[0][0], 4), "auto" if pack_known.get(top) else "auto_nopack", cands
 
 
 def build_crosswalk(items: pd.DataFrame, refs: list[SkuRef], existing: pd.DataFrame | None,
-                    strip_tokens: list[str], auto_accept: float, review_min: float) -> pd.DataFrame:
+                    strip_tokens: list[str], auto_accept: float, review_min: float,
+                    tie_margin: float = 0.01) -> pd.DataFrame:
     """Draft crosswalk rows for platform items. Confirmed rows are never overwritten."""
     keep: dict[tuple[str, str], dict[str, Any]] = {}
     if existing is not None and not existing.empty:
@@ -208,8 +213,9 @@ def build_crosswalk(items: pd.DataFrame, refs: list[SkuRef], existing: pd.DataFr
         if prev and (prev.get("confirmed_at") or prev.get("match_method") in ("manual", "ean")):
             rows.append(prev)
             continue
-        sku, score, method, cands = match_item(it.get("platform_name") or "", it.get("ean"), refs, strip_tokens)
-        if method in ("auto", "auto_nopack"):
+        sku, score, method, cands = match_item(it.get("platform_name") or "", it.get("ean"), refs, strip_tokens,
+                                               tie_margin)
+        if method in ("auto", "auto_nopack", "tie"):
             if score >= auto_accept and method == "auto":
                 method = "auto"
             elif score >= review_min:

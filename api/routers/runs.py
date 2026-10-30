@@ -13,16 +13,17 @@ import pandas as pd
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import Response
 
-from api.deps import CurrentUser, plan_config, pool
+from api.deps import CurrentUser, plan_config, pool, store
 from api.services import runs as run_svc
 from api.services.ask_agent import event
 from api.services.edits import undo_edit
 from api.services.plans import load_plan
+from api.services.workspace import snapshot_table
 from api.sse import sse_response
 from core.config import REPO_ROOT
 from core.db import tenant_transaction
 from core.domain.edits import EditError
-from core.domain.reports import export_plan_xlsx, export_reasoning_xlsx, reasoning_rows
+from core.domain.reports import export_plan_xlsx, export_reasoning_xlsx, history_actuals, reasoning_rows
 from worker.steps import section_for
 
 router = APIRouter(tags=["runs"])
@@ -199,22 +200,18 @@ async def export_plan(run_id: str, user: CurrentUser) -> Response:
         await cur.execute("SELECT name, kind, origin, value::float AS value, enabled, basis FROM core.factor "
                           "WHERE run_id=%s", (run_id,))
         factors = pd.DataFrame([dict(r) for r in await cur.fetchall()])
-        await cur.execute("""SELECT s.sku_code, s.city, date_trunc('month', s.order_date)::date AS month,
-                             sum(coalesce(s.qty_invoiced,0)+coalesce(s.qty_cancelled,0))::float AS q, max(s.mrp)::float AS mrp
-                             FROM core.sellin_line s JOIN raw.dataset d ON d.id = s.dataset_id
-                             WHERE d.session_id=%s AND d.status='ready' AND s.status IN ('invoiced','confirmed')
-                               AND NOT s.is_internal GROUP BY 1,2,3""", (run["session_id"],))
-        actuals = pd.DataFrame([dict(r) for r in await cur.fetchall()])
+        # history from the run's own snapshot: core.sellin_line has no resolved city or internal flag
+        await cur.execute("SELECT id::text AS id, session_id::text AS session_id, table_hashes "
+                          "FROM meta.workspace_snapshot WHERE id=%s", (run["sid"],))
+        snap = await cur.fetchone()
         await cur.execute("SELECT line_id, value_text AS share_basis FROM core.variable_value "
                           "WHERE run_id=%s AND name='city_share'", (run_id,))
         basis = {r["line_id"]: r["share_basis"] for r in await cur.fetchall()}
     cfg = plan_config()
     tm = pd.Timestamp(run["target_month"])
-    if not actuals.empty:
-        actuals["month"] = pd.to_datetime(actuals["month"])
-        actuals = actuals[actuals["month"] < tm].copy()
-        months = sorted(actuals["month"].unique())[-int(cfg.get("history.months")):]
-        actuals = actuals[actuals["month"].isin(months)]
+    sellin = await asyncio.to_thread(snapshot_table, store(), user.company_id, dict(snap), "sellin_line") \
+        if snap else None
+    actuals = history_actuals(sellin, tm, int(cfg.get("history.months")), cfg.get("history.sellin_statuses"))
     lines["share_basis"] = lines["line_id"].map(basis)
     mrp = actuals.groupby("sku_code")["mrp"].max().to_dict() if not actuals.empty else {}
     meta = {"target_month": f"{tm:%Y-%m-%d}", "version": ver["version"], "run_id": run_id}

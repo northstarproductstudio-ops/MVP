@@ -51,7 +51,7 @@ def import_folder(files: list[Path], cfg: PlanConfig, crosswalk: pd.DataFrame | 
         data, sku_master, crosswalk, er.seed_customer_rules(), er.seed_city_aliases(),
         unmatched_share=cfg.get("city_map.unmatched_share_alert"),
         strip_tokens=cfg.get("brand.strip_tokens"), auto_accept=cfg.get("crosswalk.auto_accept"),
-        review_min=cfg.get("crosswalk.review_min"))
+        review_min=cfg.get("crosswalk.review_min"), tie_margin=cfg.get("crosswalk.tie_margin", 0.01))
     return snap, warns
 
 

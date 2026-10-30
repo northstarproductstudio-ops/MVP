@@ -189,7 +189,8 @@ def draft_crosswalk(conn: psycopg.Connection, company_id: str, cfg: PlanConfig) 
         return 0
     strip = cfg.get("brand.strip_tokens")
     drafted = er.build_crosswalk(todo, er.sku_refs(sellin_df, sm, strip), None, strip,
-                                 cfg.get("crosswalk.auto_accept"), cfg.get("crosswalk.review_min"))
+                                 cfg.get("crosswalk.auto_accept"), cfg.get("crosswalk.review_min"),
+                                 cfg.get("crosswalk.tie_margin", 0.01))
     with conn.transaction():
         for r in drafted.to_dict("records"):
             cands = json.loads(r["candidates"]) if isinstance(r.get("candidates"), str) else r.get("candidates")

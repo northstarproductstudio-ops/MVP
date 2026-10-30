@@ -59,6 +59,7 @@ market:
 crosswalk:
   auto_accept: 0.90
   review_min: 0.75
+  tie_margin: 0.01          # runner-up this close to the top score (same name and pack) goes to review
   hard_fail_unmapped: true  # step 1 rule in Entity resolution
 
 city_map:

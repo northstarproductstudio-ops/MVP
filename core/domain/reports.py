@@ -106,6 +106,26 @@ def export_reasoning_xlsx(rows: pd.DataFrame, meta: dict[str, Any]) -> bytes:
 
 # --------------------------------------------------------------------------- plan report (formatRef)
 
+def history_actuals(sellin: pd.DataFrame, target_month: pd.Timestamp, months: int,
+                    statuses: list[str]) -> pd.DataFrame:
+    """Primary sales per SKU × city × month for the plan report, from a run's snapshot
+    sell-in, where cities and internal customers are already resolved as the pipeline saw
+    them (core.sellin_line stores neither). The last ``months`` months before the target."""
+    cols = ["sku_code", "city", "month", "q", "mrp"]
+    if sellin is None or sellin.empty:
+        return pd.DataFrame(columns=cols)
+    internal = sellin["is_internal"].map(lambda v: str(v).strip().lower() in ("true", "1"))
+    s = sellin[sellin["status"].isin(statuses) & ~internal].copy()
+    s["month"] = pd.to_datetime(s["order_date"]).dt.to_period("M").dt.to_timestamp()
+    s = s[s["month"] < target_month]
+    s = s[s["month"].isin(sorted(s["month"].unique())[-months:])]
+    s["q"] = pd.to_numeric(s["qty_invoiced"], errors="coerce").fillna(0) \
+        + pd.to_numeric(s["qty_cancelled"], errors="coerce").fillna(0)
+    s["mrp"] = pd.to_numeric(s["mrp"], errors="coerce")
+    out = s.groupby(["sku_code", "city", "month"], as_index=False).agg(q=("q", "sum"), mrp=("mrp", "max"))
+    return out[cols]
+
+
 def export_plan_xlsx(template: Path, lines: pd.DataFrame, actuals: pd.DataFrame, factors: pd.DataFrame,
                      meta: dict[str, Any], cities: list[str], mrp: dict[str, float] | None = None) -> bytes:
     """Write the plan into the formatRef template, numbers only.
