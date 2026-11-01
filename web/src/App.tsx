@@ -1,12 +1,12 @@
 // Shell and routes. A chat runs Import → Map → Plan (planning happens inside Ask); Data and
 // Crosswalk are workspace pages; the report viewer is a full page opened from a report card.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, LogIn } from "lucide-react";
+import { Copy, LogIn, Trash2 } from "lucide-react";
 import { api, type Json } from "./api";
 import { getToken, signIn, signOut, supabase, usesDevToken } from "./auth";
-import type { Stage } from "./components/common";
+import { dateLabel, type Stage } from "./components/common";
 import { Sidebar, StepRail, TopBar, useTheme, type NavId } from "./components/Shell";
-import { Banner, Button, ErrorBlank, Loading } from "./components/ui";
+import { Banner, Button, Dialog, ErrorBlank, Loading } from "./components/ui";
 import { AskScreen } from "./screens/AskScreen";
 import { CrosswalkScreen } from "./screens/CrosswalkScreen";
 import { ImportScreen } from "./screens/ImportScreen";
@@ -49,6 +49,18 @@ function useRoute(): [Route, (hash: string) => void] {
   }, []);
   return [r, (hash) => { window.location.hash = hash; }];
 }
+
+// Which chat was open last and the stage each chat was left on, so Chats and the recent list
+// return there rather than to the newest chat. Kept in this browser; storage may be off.
+type Places = { last?: string; stage: Record<string, Stage> };
+function readPlaces(): Places {
+  try { return { stage: {}, ...JSON.parse(localStorage.getItem("chat-places") || "{}") }; } catch { return { stage: {} }; }
+}
+function writePlaces(p: Places) {
+  try { localStorage.setItem("chat-places", JSON.stringify(p)); } catch { /* storage off */ }
+}
+const chatHash = (s: Json) => `#/s/${s.id}/${readPlaces().stage[s.id] ?? (s.current_run_id ? "ask" : "import")}`;
+const lastChat = (list: Json[]) => list.find((s) => s.id === readPlaces().last) ?? list[0];
 
 // Slate serves index.html with a one-year cache, so a tab (or a cached load) can keep running
 // an old bundle after a deploy. Fetching the page with cache "reload" reads the live bundle name
@@ -162,24 +174,62 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
   const [draft, setDraft] = useState<string | null>(null);
   const sid = route.page === "chat" || route.page === "report" ? route.sid : null;
   const stale = useNewBuild();
+  const creating = useRef(false);
+  const [delAsk, setDelAsk] = useState<Json | null>(null);
+  const [delErr, setDelErr] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadSessions = useCallback(() => api.listSessions().then(setSessions), []);
   const loadCw = useCallback(() => api.crosswalk("review").then((c) => setCwCount((c.rows ?? []).length)).catch(() => setCwCount(null)), []);
   useEffect(() => { loadSessions().catch((e) => setError(e.message)); loadCw(); }, [loadSessions, loadCw]);
 
   const newChat = async () => {
-    const s = await api.createSession("Demand planning");
-    await loadSessions();
-    go(`#/s/${s.id}/import`);
+    if (creating.current) return; // one chat per press, even when pressed again while it is being made
+    creating.current = true;
+    try {
+      const s = await api.createSession("Demand planning");
+      await loadSessions();
+      go(`#/s/${s.id}/import`);
+    } finally {
+      creating.current = false;
+    }
+  };
+
+  const deleteChat = async () => {
+    if (!delAsk) return;
+    setDeleting(true);
+    setDelErr(null);
+    try {
+      await api.deleteSession(delAsk.id);
+      const list: Json[] = await api.listSessions();
+      setSessions(list);
+      const p = readPlaces();
+      delete p.stage[delAsk.id];
+      writePlaces({ ...p, last: p.last === delAsk.id ? undefined : p.last });
+      if (sid === delAsk.id) { const next = lastChat(list); go(next ? chatHash(next) : "#/"); }
+      setDelAsk(null);
+    } catch (e: any) {
+      setDelErr(e.message);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   useEffect(() => {
     if (route.page !== "home") return;
     api.listSessions().then(async (list) => {
-      if (list[0]) go(`#/s/${list[0].id}/${list[0].current_run_id ? "ask" : "import"}`);
+      const s = lastChat(list);
+      if (s) go(chatHash(s));
       else await newChat();
     }).catch((e) => setError(e.message));
   }, [route.page]); // eslint-disable-line
+
+  // remember where each chat was left
+  useEffect(() => {
+    if (route.page !== "chat") return;
+    const p = readPlaces();
+    writePlaces({ last: route.sid, stage: { ...p.stage, [route.sid]: route.stage } });
+  }, [route.page === "chat" ? `${route.sid}/${route.stage}` : ""]); // eslint-disable-line
 
   const refresh = useCallback(async () => {
     if (sid) setSession(await api.session(sid));
@@ -194,6 +244,11 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
     const t = setTimeout(() => refresh().catch(() => undefined), 2500);
     return () => clearTimeout(t);
   }, [session, refresh]);
+  // a chat with no files and no messages has nothing to plan from yet: open it at Import
+  useEffect(() => {
+    if (route.page === "chat" && route.stage === "ask" && session?.id === route.sid
+      && !session.datasets?.length && !session.messages?.length) location.replace(`#/s/${route.sid}/import`);
+  }, [session, route.page === "chat" ? route.stage : ""]); // eslint-disable-line
 
   if (route.page === "report") {
     return <ReportView runId={route.rid} session={session} onBack={() => go(`#/s/${route.sid}/ask`)}
@@ -251,9 +306,10 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
           else if (n === "crosswalk") go("#/crosswalk");
           else if (n === "settings") go("#/settings");
           else if (n === "pipeline") go("#/pipeline");
-          else go(sessions[0] ? `#/s/${sessions[0].id}/ask` : "#/");
+          else { const s = lastChat(sessions); go(s ? chatHash(s) : "#/"); }
         }}
-        onChat={(id) => go(`#/s/${id}/ask`)} onNewChat={newChat} theme={theme} onTheme={toggleTheme}
+        onChat={(id) => go(chatHash(sessions.find((s) => s.id === id) ?? { id }))} onNewChat={newChat}
+        onDeleteChat={(s) => { setDelErr(null); setDelAsk(s); }} theme={theme} onTheme={toggleTheme}
         onSignOut={usesDevToken ? undefined : () => signOut().then(() => location.reload())} />
       <div className="maincol">
         <TopBar workspace={WORKSPACE} here={here} />
@@ -265,6 +321,15 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
         )}
         {body}
       </div>
+      {delAsk && (
+        <Dialog title="Delete this chat?" onClose={() => setDelAsk(null)}
+          footer={<><Button onClick={() => setDelAsk(null)}>Cancel</Button>
+            <Button variant="danger" icon={Trash2} busy={deleting} onClick={deleteChat}>Delete chat</Button></>}>
+          <p>“{delAsk.title || "Untitled chat"}”, started {dateLabel(delAsk.created_at)}, is deleted with its files, field mapping,
+            plans and messages. This can’t be undone.</p>
+          {delErr && <Banner tone="crit" role="alert">{delErr}</Banner>}
+        </Dialog>
+      )}
     </div>
   );
 }

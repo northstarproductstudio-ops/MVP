@@ -33,11 +33,17 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
   onGoCrosswalk: () => void;
   onTitle: () => void;
 }) {
-  const [turns, setTurns] = useState<Turn[]>(() =>
-    (session.messages ?? []).map((m: Json) => ({
+  const [turns, setTurns] = useState<Turn[]>(() => {
+    const ts: Turn[] = (session.messages ?? []).map((m: Json) => ({
       role: m.role, text: m.content ?? "", tools: [], evidence: m.evidence ?? [],
       runId: (m.tool_calls ?? []).map((t: Json) => t.run_id).filter(Boolean).pop(),
-    })));
+    }));
+    // a run still going whose reply is not saved yet (the chat was left mid-answer) keeps its card
+    const shown = new Set(ts.map((t) => t.runId));
+    const open: Turn[] = (session.runs ?? []).filter((r: Json) => ["queued", "running"].includes(r.status) && !shown.has(r.id))
+      .map((r: Json) => ({ role: "assistant", text: "", tools: [], evidence: [], runId: r.id }));
+    return [...ts, ...open];
+  });
   // redraw report cards for runs referenced in the history
   useEffect(() => {
     turns.forEach((t, i) => {

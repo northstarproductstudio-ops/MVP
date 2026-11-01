@@ -137,10 +137,16 @@ p { margin: 0; }
 .navitem .count { font-size: var(--text-caption); color: var(--text-secondary); }
 .sidenav.collapsed .navitem { justify-content: center; padding: 0; }
 .sidenav.collapsed .navitem .label, .sidenav.collapsed .navitem .count { display: none; }
-.recent { display: block; padding: 6px 8px; border-radius: var(--radius-control); text-decoration: none; color: var(--text-secondary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.recent:hover { color: var(--text); background: var(--soft); }
-.recent.active { background: var(--soft); color: var(--text); }
+.recent-row { display: flex; align-items: center; border-radius: var(--radius-control); }
+.recent-row:hover, .recent-row.active { background: var(--soft); }
+.recent { flex: 1 1 auto; min-width: 0; display: flex; gap: 8px; align-items: baseline; padding: 6px 8px;
+  text-decoration: none; color: var(--text-secondary); }
+.recent .title { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent .when { flex: none; font-size: var(--text-caption); color: var(--text-secondary); }
+.recent-row:hover .recent, .recent-row.active .recent { color: var(--text); }
+.recent-row .iconbtn { flex: none; opacity: 0; margin-right: 2px; }
+.recent-row:hover .iconbtn, .recent-row:focus-within .iconbtn { opacity: 1; }
+.recent-row:hover .when, .recent-row:focus-within .when { display: none; }
 
 .maincol { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .topbar { height: 56px; flex: none; padding: 0 var(--page-margin); background: var(--surface); border-bottom: 1px solid var(--line);

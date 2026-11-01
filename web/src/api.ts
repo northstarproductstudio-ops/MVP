@@ -38,6 +38,7 @@ export const api = {
   createSession: (title?: string) => req("/sessions", { method: "POST", body: JSON.stringify({ title }) }),
   listSessions: () => req<Json[]>("/sessions"),
   session: (id: string) => req(`/sessions/${id}`),
+  deleteSession: (id: string) => req(`/sessions/${id}`, { method: "DELETE" }),
   upload: (sid: string, files: File[]) => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f, f.name));

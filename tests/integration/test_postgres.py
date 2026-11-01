@@ -111,3 +111,41 @@ def test_sweeper_requeues_then_fails(db):
         st = su.execute("SELECT r.status FROM meta.workflow_run r JOIN meta.job_queue q ON q.run_id = r.id "
                         "WHERE q.session_id=%s", (sid,)).fetchone()["status"]
         assert st == "failed"
+
+
+def test_delete_chat_cascades_and_waits_for_running_jobs(db, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    from psycopg_pool import AsyncConnectionPool
+
+    from api.routers import sessions
+
+    with psycopg.connect(db, autocommit=True) as su:
+        su.execute("UPDATE meta.job_queue SET status='done' WHERE status IN ('queued','running')")
+        cid, sid = _company(su)
+        other, other_sid = _company(su)
+        su.execute("UPDATE meta.job_queue SET status='running' WHERE session_id=%s", (sid,))
+    api_url = psycopg.conninfo.make_conninfo(db, user="app_api", password="test-app-api")
+
+    async def delete(company: str) -> dict:
+        async with AsyncConnectionPool(api_url, min_size=1, max_size=1, open=False) as p:
+            monkeypatch.setattr(sessions, "pool", lambda: p)
+            return await sessions.delete_session(sid, SimpleNamespace(company_id=company, user_id=None))
+
+    with pytest.raises(HTTPException) as busy:
+        asyncio.run(delete(cid))
+    assert busy.value.status_code == 409
+    with psycopg.connect(db, autocommit=True) as su:
+        su.execute("UPDATE meta.job_queue SET status='done' WHERE session_id=%s", (sid,))
+    with pytest.raises(HTTPException) as hidden:  # another company cannot see the chat
+        asyncio.run(delete(other))
+    assert hidden.value.status_code == 404
+    assert asyncio.run(delete(cid)) == {"deleted": sid}
+    with psycopg.connect(db) as su:
+        for where in ("core.chat_session WHERE id", "raw.dataset WHERE session_id",
+                      "meta.workflow_run WHERE session_id", "meta.job_queue WHERE session_id"):
+            assert su.execute(f"SELECT count(*) FROM {where}=%s", (sid,)).fetchone()[0] == 0, where  # noqa: S608
+        assert su.execute("SELECT count(*) FROM core.sellin_line WHERE company_id=%s", (cid,)).fetchone()[0] == 0
+        assert su.execute("SELECT count(*) FROM core.chat_session WHERE id=%s", (other_sid,)).fetchone()[0] == 1

@@ -2,13 +2,21 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ArrowLeftRight, Check, CircleHelp, CircleUser, Database, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, Plus,
-  Settings, Sun, Workflow,
+  Settings, Sun, Trash2, Workflow,
 } from "lucide-react";
 import type { Json } from "../api";
 import type { Stage } from "./common";
 import { IconButton } from "./ui";
 
 export type NavId = "chats" | "saved" | "crosswalk" | "settings" | "pipeline";
+
+// chats share a title, so each row carries when it was started: a time today, else the date
+const started = (iso: string) => {
+  const d = new Date(iso);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+};
 
 export function useTheme(): ["light" | "dark", () => void] {
   const read = () => {
@@ -34,9 +42,9 @@ function NavItem({ icon: I, label, active, count, onClick }: {
   );
 }
 
-export function Sidebar({ active, workspace, sessions, currentSid, crosswalkCount, onNav, onChat, onNewChat, theme, onTheme, onSignOut }: {
+export function Sidebar({ active, workspace, sessions, currentSid, crosswalkCount, onNav, onChat, onNewChat, onDeleteChat, theme, onTheme, onSignOut }: {
   active: NavId; workspace: string; sessions: Json[]; currentSid: string | null; crosswalkCount: number | null;
-  onNav: (n: NavId) => void; onChat: (sid: string) => void; onNewChat: () => void;
+  onNav: (n: NavId) => void; onChat: (sid: string) => void; onNewChat: () => void; onDeleteChat: (s: Json) => void;
   theme: "light" | "dark"; onTheme: () => void; onSignOut?: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 1024);
@@ -60,9 +68,14 @@ export function Sidebar({ active, workspace, sessions, currentSid, crosswalkCoun
             <IconButton icon={Plus} label="New chat" size="sm" onClick={onNewChat} />
           </span>
           {sessions.slice(0, 12).map((s) => (
-            <a key={s.id} href={`#/s/${s.id}/ask`} className={`recent ${s.id === currentSid ? "active" : ""}`}
-              aria-current={s.id === currentSid ? "page" : undefined}
-              onClick={(e) => { e.preventDefault(); onChat(s.id); }}>{s.title || "Untitled chat"}</a>
+            <div key={s.id} className={`recent-row ${s.id === currentSid ? "active" : ""}`}>
+              <a href={`#/s/${s.id}/ask`} className="recent" aria-current={s.id === currentSid ? "page" : undefined}
+                onClick={(e) => { e.preventDefault(); onChat(s.id); }}>
+                <span className="title">{s.title || "Untitled chat"}</span><span className="when">{started(s.created_at)}</span>
+              </a>
+              <IconButton icon={Trash2} label={`Delete ${s.title || "Untitled chat"}, started ${started(s.created_at)}`} size="sm"
+                onClick={() => onDeleteChat(s)} />
+            </div>
           ))}
         </div>
       )}

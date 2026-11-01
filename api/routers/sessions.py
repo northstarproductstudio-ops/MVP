@@ -66,6 +66,24 @@ async def get_session(session_id: str, user: CurrentUser) -> dict[str, Any]:
     return {**dict(s), "datasets": datasets, "messages": messages, "runs": runs}
 
 
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, user: CurrentUser) -> dict[str, Any]:
+    """Delete a chat with its files, mapping, runs, plans and messages (FK cascades). Stored
+    uploads stay in the write-once bucket; the same file can be imported again afterwards."""
+    async with tenant_transaction(pool(), user.company_id) as cur:
+        await cur.execute("SELECT 1 FROM meta.job_queue WHERE session_id=%s AND status IN ('queued','running') "
+                          "LIMIT 1", (session_id,))
+        if await cur.fetchone():
+            raise HTTPException(409, "A plan or file is still being processed in this chat. Stop the run or wait "
+                                     "for it to finish, then delete the chat.")
+        # import and materialize jobs have no run to cascade from
+        await cur.execute("DELETE FROM meta.job_queue WHERE session_id=%s", (session_id,))
+        await cur.execute("DELETE FROM core.chat_session WHERE id=%s RETURNING id", (session_id,))
+        if not await cur.fetchone():
+            raise HTTPException(404, "chat not found")
+    return {"deleted": session_id}
+
+
 @router.post("/sessions/{session_id}/messages")
 async def post_message(session_id: str, body: NewMessage, user: CurrentUser):  # noqa: ANN201
     turn = AskTurn(pool(), store(), settings(), plan_config(), user.company_id, user.user_id, session_id)
