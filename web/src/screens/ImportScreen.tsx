@@ -1,21 +1,25 @@
 // S-02 Import (1–10 files per chat) and S-03 Processing (reading rows and proposing field storage).
+// Saved data from other chats can be picked instead of uploading; mapping opens in the chat that holds it.
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Clock, FileSpreadsheet, FileUp, X } from "lucide-react";
 import { api, type Json } from "../api";
-import { bytes, DATASET_STATUS, fmt } from "../components/common";
+import { bytes, DATASET_STATUS, dateLabel, fmt, PLATFORMS_OF } from "../components/common";
 import { Button, Empty, IconButton, Progress, StateChip } from "../components/ui";
 
 const MAX = 10;
 const OK = /\.(csv|xlsx|xlsm|xls)$/i;
 const DONE = ["parsed", "failed", "mapped", "ready", "duplicate"];
+const USABLE = ["parsed", "mapped", "ready"];
 
 type Rejected = { name: string; size: number; reason: string };
 
-export function ImportScreen({ sessionId, datasets, onRefresh, onContinue }: {
+export function ImportScreen({ sessionId, datasets, sessions, onRefresh, onContinue, onUseSaved }: {
   sessionId: string;
   datasets: Json[];
+  sessions: Json[];
   onRefresh: () => Promise<void>;
   onContinue: () => void;
+  onUseSaved: (sid: string) => void;
 }) {
   const [over, setOver] = useState(false);
   const [uploading, setUploading] = useState<File[]>([]);
@@ -24,6 +28,8 @@ export function ImportScreen({ sessionId, datasets, onRefresh, onContinue }: {
   const [tracking, setTracking] = useState<string[]>([]);
   const [live, setLive] = useState<Record<string, Json>>({});
   const [processing, setProcessing] = useState(false);
+  const [saved, setSaved] = useState<Json[] | null>(null);
+  const [pick, setPick] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const used = datasets.filter((d) => !["failed", "duplicate"].includes(d.status)).length;
   const room = MAX - used - uploading.length;
@@ -54,6 +60,15 @@ export function ImportScreen({ sessionId, datasets, onRefresh, onContinue }: {
       setUploading([]);
     }
   };
+
+  // other chats whose files are read and can be mapped
+  useEffect(() => {
+    Promise.all(sessions.filter((s) => s.id !== sessionId).map((s) => api.session(s.id).catch(() => null)))
+      .then((all) => setSaved(all.flatMap((s) => {
+        const ds = (s?.datasets ?? []).filter((d: Json) => USABLE.includes(d.status));
+        return s && ds.length ? [{ ...s, datasets: ds }] : [];
+      })));
+  }, [sessionId, sessions.map((s) => s.id).join()]); // eslint-disable-line
 
   // poll reading progress for the files just uploaded
   useEffect(() => {
@@ -104,6 +119,38 @@ export function ImportScreen({ sessionId, datasets, onRefresh, onContinue }: {
             <input ref={input} type="file" multiple hidden accept=".csv,.xlsx,.xlsm,.xls" onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
           </div>
           {error && <div className="banner crit" role="alert"><span className="grow">{error}</span></div>}
+          {!!saved?.length && (
+            <section className="card">
+              <div className="card-head">
+                <div className="stack" style={{ gap: 0 }}>
+                  <h2>Saved data</h2>
+                  <span className="t-small muted">Files already imported in another chat. Pick one to go straight to mapping, no upload needed.</span>
+                </div>
+                <Button size="sm" iconRight={ArrowRight} disabled={!pick} reason="Pick a saved dataset first." onClick={() => pick && onUseSaved(pick)}>Use saved data</Button>
+              </div>
+              <div className="tblwrap">
+                <table className="tbl">
+                  <thead><tr><th>Dataset</th><th>Platforms</th><th className="num">Files</th><th className="num">Rows</th><th>Updated</th></tr></thead>
+                  <tbody>
+                    {saved.map((s) => {
+                      const ds: Json[] = s.datasets;
+                      const on = pick === s.id;
+                      return (
+                        <tr key={s.id} className={`clickable ${on ? "sel" : ""}`} onClick={() => setPick(s.id)} aria-selected={on}>
+                          <td className="strong"><span className="row"><span className="selmark" style={{ height: 20, background: on ? undefined : "transparent" }} aria-hidden="true" />
+                            <button type="button" className="linkbtn" style={{ textDecoration: "none", fontWeight: 500 }} onClick={() => setPick(s.id)}>{s.title || "Untitled chat"}</button></span></td>
+                          <td>{PLATFORMS_OF(ds).join(" · ") || "—"}</td>
+                          <td className="num">{ds.length}</td>
+                          <td className="num">{fmt(ds.reduce((n, d) => n + (d.rows_read || 0), 0))}</td>
+                          <td className="muted">{dateLabel(ds[ds.length - 1]?.created_at ?? s.created_at)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
           <div className="row between" style={{ alignItems: "baseline" }}>
             <h2>Files in this chat</h2>
             <span className="t-small muted">Showing {total} of {total} files</span>
