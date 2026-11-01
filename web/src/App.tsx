@@ -50,8 +50,9 @@ function useRoute(): [Route, (hash: string) => void] {
   return [r, (hash) => { window.location.hash = hash; }];
 }
 
-// Which chat was open last and the stage each chat was left on, so Chats and the recent list
-// return there rather than to the newest chat. Kept in this browser; storage may be off.
+// Which chat was open last and the stage each chat was left on, so Chats and the app start
+// return there rather than to the newest chat; the recent list opens a chat's conversation. Kept in
+// this browser; storage may be off.
 type Places = { last?: string; stage: Record<string, Stage> };
 function readPlaces(): Places {
   try { return { stage: {}, ...JSON.parse(localStorage.getItem("chat-places") || "{}") }; } catch { return { stage: {} }; }
@@ -59,7 +60,7 @@ function readPlaces(): Places {
 function writePlaces(p: Places) {
   try { localStorage.setItem("chat-places", JSON.stringify(p)); } catch { /* storage off */ }
 }
-const chatHash = (s: Json) => `#/s/${s.id}/${readPlaces().stage[s.id] ?? (s.current_run_id ? "ask" : "import")}`;
+const chatHash = (s: Json) => `#/s/${s.id}/${readPlaces().stage[s.id] ?? "ask"}`;
 const lastChat = (list: Json[]) => list.find((s) => s.id === readPlaces().last) ?? list[0];
 
 // Slate serves index.html with a one-year cache, so a tab (or a cached load) can keep running
@@ -244,11 +245,6 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
     const t = setTimeout(() => refresh().catch(() => undefined), 2500);
     return () => clearTimeout(t);
   }, [session, refresh]);
-  // a chat with no files and no messages has nothing to plan from yet: open it at Import
-  useEffect(() => {
-    if (route.page === "chat" && route.stage === "ask" && session?.id === route.sid
-      && !session.datasets?.length && !session.messages?.length) location.replace(`#/s/${route.sid}/import`);
-  }, [session, route.page === "chat" ? route.stage : ""]); // eslint-disable-line
 
   if (route.page === "report") {
     return <ReportView runId={route.rid} session={session} onBack={() => go(`#/s/${route.sid}/ask`)}
@@ -293,7 +289,7 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
           onSaved={async () => { await refresh(); loadCw(); go(`#/s/${sid}/ask`); }} />}
         {stage === "ask" && <AskScreen session={session} crosswalkCount={cwCount} pendingQuestion={pending} draft={draft}
           onConsumed={() => { setPending(null); setDraft(null); }} onOpenReport={(rid) => go(`#/s/${sid}/report/${rid}`)}
-          onGoMap={() => go(`#/s/${sid}/map`)} onGoCrosswalk={() => go("#/crosswalk")} onTitle={loadSessions} />}
+          onGoImport={() => go(`#/s/${sid}/import`)} onGoMap={() => go(`#/s/${sid}/map`)} onGoCrosswalk={() => go("#/crosswalk")} onTitle={loadSessions} />}
       </>
     );
   }
@@ -308,7 +304,7 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
           else if (n === "pipeline") go("#/pipeline");
           else { const s = lastChat(sessions); go(s ? chatHash(s) : "#/"); }
         }}
-        onChat={(id) => go(chatHash(sessions.find((s) => s.id === id) ?? { id }))} onNewChat={newChat}
+        onChat={(id) => go(`#/s/${id}/ask`)} onNewChat={newChat}
         onDeleteChat={(s) => { setDelErr(null); setDelAsk(s); }} theme={theme} onTheme={toggleTheme}
         onSignOut={usesDevToken ? undefined : () => signOut().then(() => location.reload())} />
       <div className="maincol">

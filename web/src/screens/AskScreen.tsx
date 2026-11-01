@@ -22,13 +22,14 @@ type Turn = {
   question?: string;
 };
 
-export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onConsumed, onOpenReport, onGoMap, onGoCrosswalk, onTitle }: {
+export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onConsumed, onOpenReport, onGoImport, onGoMap, onGoCrosswalk, onTitle }: {
   session: Json;
   crosswalkCount: number | null;
   pendingQuestion: string | null;
   draft: string | null;
   onConsumed: () => void;
   onOpenReport: (runId: string) => void;
+  onGoImport: () => void;
   onGoMap: () => void;
   onGoCrosswalk: () => void;
   onTitle: () => void;
@@ -139,10 +140,17 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
               {ws.datasets} files · data {ws.date_from} to {ws.as_of} · {fmt(ws.skus)} SKUs · {ws.cities?.length} cities · {ws.platforms?.length} platforms
             </p>
           )}
-          {!ready && (
+          {!datasets.length && empty && (
+            <div className="blank" style={{ padding: "64px 0 24px" }}>
+              <span className="t-lg">This chat has no data yet.</span>
+              <span className="muted">Upload sales files, or pick data already imported in another chat.</span>
+              <Button variant="primary" size="sm" onClick={onGoImport}>Add data</Button>
+            </div>
+          )}
+          {datasets.length > 0 && !ready && (
             <Banner tone="warn">
               <span className="row between wrap" style={{ width: "100%" }}>
-                <span>{datasets.length ? "No file in this chat has a saved mapping yet. Planning opens when a sales-order file is mapped." : "Import and map a sales-order file to ask about it or plan a month."}</span>
+                <span>No file in this chat has a saved mapping yet. Planning opens when a sales-order file is mapped.</span>
                 <Button size="sm" onClick={onGoMap}>Fix the mapping</Button>
               </span>
             </Banner>
@@ -215,7 +223,7 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
           <form className="composer" onSubmit={(e) => { e.preventDefault(); ask(q); }}>
             <label className="grow" style={{ display: "flex" }}>
               <span className="sr-only">Message</span>
-              <textarea rows={1} value={q} disabled={!ready} placeholder={ready ? "Ask about the plan, or plan another month" : "Map a sales-order file first"}
+              <textarea rows={1} value={q} disabled={!ready} placeholder={ready ? "Ask about the plan, or plan another month" : datasets.length ? "Map a sales-order file first" : "Add data to this chat first"}
                 onChange={(e) => { setQ(e.target.value); e.target.style.height = "auto"; e.target.style.height = `${e.target.scrollHeight}px`; }}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(q); } }} />
             </label>
