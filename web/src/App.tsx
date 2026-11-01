@@ -50,6 +50,31 @@ function useRoute(): [Route, (hash: string) => void] {
   return [r, (hash) => { window.location.hash = hash; }];
 }
 
+// Slate serves index.html with a one-year cache, so a tab (or a cached load) can keep running
+// an old bundle after a deploy. Fetching the page with cache "reload" reads the live bundle name
+// and refreshes the cached copy; a stale bundle reloads once at start, later it offers Reload.
+function useNewBuild(): boolean {
+  const [stale, setStale] = useState(false);
+  useEffect(() => {
+    const mine = document.querySelector<HTMLScriptElement>('script[type="module"][src*="/assets/"]')?.getAttribute("src");
+    if (!mine) return; // dev server
+    const check = (atStart: boolean) => fetch(location.pathname, { cache: "reload" }).then((r) => r.text()).then((html) => {
+      const live = html.match(/\/assets\/index-[\w-]+\.js/)?.[0];
+      if (!live || mine.endsWith(live)) return;
+      let tried: string | null = null;
+      try { tried = sessionStorage.getItem("reloaded-for"); sessionStorage.setItem("reloaded-for", live); } catch { /* storage off */ }
+      if (atStart && tried !== live) location.reload();
+      else setStale(true);
+    }).catch(() => undefined);
+    check(true);
+    const t = setInterval(() => check(false), 5 * 60 * 1000);
+    const onVis = () => { if (document.visibilityState === "visible") check(false); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+  return stale;
+}
+
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const theme = useTheme();
@@ -136,6 +161,7 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
   const [pending, setPending] = useState<string | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const sid = route.page === "chat" || route.page === "report" ? route.sid : null;
+  const stale = useNewBuild();
 
   const loadSessions = useCallback(() => api.listSessions().then(setSessions), []);
   const loadCw = useCallback(() => api.crosswalk("review").then((c) => setCwCount((c.rows ?? []).length)).catch(() => setCwCount(null)), []);
@@ -231,6 +257,12 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
         onSignOut={usesDevToken ? undefined : () => signOut().then(() => location.reload())} />
       <div className="maincol">
         <TopBar workspace={WORKSPACE} here={here} />
+        {stale && (
+          <div style={{ padding: "12px var(--page-margin) 0" }}>
+            <Banner tone="info" role="status">A newer version of this app is available.{" "}
+              <button type="button" className="linkbtn" onClick={() => location.reload()}>Reload</button> to use it.</Banner>
+          </div>
+        )}
         {body}
       </div>
     </div>
