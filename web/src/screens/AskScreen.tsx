@@ -1,6 +1,6 @@
 // S-07 / MVP-06–09: Ask thread with suggested questions, the live plan workflow card and the report card.
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, ArrowUpRight, ChevronDown, ChevronRight, Copy, Database, Download, RotateCcw } from "lucide-react";
+import { ArrowLeftRight, ArrowUp, ArrowUpRight, ChevronDown, ChevronRight, Copy, Database, Download, RotateCcw } from "lucide-react";
 import { api, download, stream, type Json, type SseEvent } from "../api";
 import { fmt, monthLabel, PLATFORMS_OF } from "../components/common";
 import { Banner, Button, StateChip } from "../components/ui";
@@ -187,7 +187,7 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
             <div key={i} className="ububble">{t.text}</div>
           ) : (
             <div key={i} className="stack g16">
-              {t.runId && <RunCard runId={t.runId} platforms={platforms} done={Boolean(t.card)}
+              {t.runId && <RunCard runId={t.runId} platforms={platforms} done={Boolean(t.card)} onCrosswalk={onGoCrosswalk}
                 onCard={(card) => setTurns((ts) => ts.map((x, j) => (j === i && !x.card ? { ...x, card } : x)))}
                 onFailed={(f) => setTurns((ts) => ts.map((x, j) => (j === i && !x.failed ? { ...x, failed: f } : x)))}
                 failed={t.failed}
@@ -248,9 +248,9 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
   );
 }
 
-function RunCard({ runId, platforms, done, failed, onCard, onFailed, onRetry }: {
+function RunCard({ runId, platforms, done, failed, onCard, onFailed, onRetry, onCrosswalk }: {
   runId: string; platforms: string[]; done: boolean; failed?: Json;
-  onCard?: (c: Json) => void; onFailed?: (f: Json) => void; onRetry: () => void;
+  onCard?: (c: Json) => void; onFailed?: (f: Json) => void; onRetry: () => void; onCrosswalk: () => void;
 }) {
   const [steps, setSteps] = useState<Record<number, Json>>({});
   const [agent, setAgent] = useState<Json | null>(null);
@@ -309,6 +309,7 @@ function RunCard({ runId, platforms, done, failed, onCard, onFailed, onRetry }: 
           <span>{st === "stopped" ? `Stopped${stopStage ? ` at ${stopStage}` : ""}. Nothing was saved as a plan.` : `The run stopped${stopStage ? ` at ${stopStage}` : ""}. Your files and mapping are saved.`}{failed?.message && !/^cancelled$/i.test(failed.message) ? ` ${failed.message}` : ""}</span>
           <span className="row end">
             {st === "failed" && <Button size="sm" icon={Copy} onClick={() => navigator.clipboard?.writeText(JSON.stringify(failed))}>Copy error details</Button>}
+            {/crosswalk/i.test(failed?.message ?? "") && <Button size="sm" icon={ArrowLeftRight} onClick={onCrosswalk}>Open Crosswalk</Button>}
             <Button size="sm" variant="primary" icon={RotateCcw} onClick={onRetry}>Retry run</Button>
           </span>
         </div>

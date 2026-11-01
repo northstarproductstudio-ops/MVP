@@ -73,7 +73,7 @@ def validate_inputs(ctx: RunContext) -> StepResult:
         msg = ("SKUs with sell-in appear in platform files but their crosswalk rows await review — "
                + "; ".join(parts))
         if cfg.get("crosswalk.hard_fail_unmapped"):
-            hard.append(msg + ". Confirm them in the crosswalk review (MVP-09) and run again.")
+            hard.append(msg + ". Confirm them on the Crosswalk page, then retry the run.")
         else:
             warn.append(msg + ". Platform factors for these SKUs are skipped.")
     for name, df in (("PO", po), ("stock", stock), ("market", market)):

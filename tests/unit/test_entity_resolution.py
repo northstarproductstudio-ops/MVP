@@ -70,6 +70,20 @@ def test_same_name_and_pack_goes_to_review_not_auto():
     assert method == "tie"
 
 
+def test_tie_goes_to_the_sku_master_code_over_codes_seen_only_in_sales():
+    strip = ["The Select Aisle", "TSA"]
+    master = pd.DataFrame([{"sku_code": "BSLASA04", "item_name": "The Select Aisle Baking Soda - 100g", "ean": None}])
+    sellin = pd.DataFrame([{"sku_code": "BSLASA04", "item_name": "The Select Aisle Baking Soda - 100g"},
+                           {"sku_code": "20SABSJR01", "item_name": "TSA Baking Soda 100g"}])  # older code, same product
+    refs = er.sku_refs(sellin, master, strip)
+    sku, score, method, cands = er.match_item("The Select Aisle Baking Soda 100 g", None, refs, strip)
+    assert (sku, score, method) == ("BSLASA04", 1.0, "auto")
+    assert {c["sku_code"] for c in cands} == {"BSLASA04", "20SABSJR01"}
+    # both codes in the master: still a real ambiguity for review
+    both = pd.concat([master, pd.DataFrame([{"sku_code": "20SABSJR01", "item_name": "TSA Baking Soda 100g", "ean": None}])])
+    assert er.match_item("The Select Aisle Baking Soda 100 g", None, er.sku_refs(sellin, both, strip), strip)[2] == "tie"
+
+
 def test_ean_match_wins():
     refs = [er.SkuRef("X1", "Foo 100g", "foo", 100, "890123")]
     sku, score, method, _ = er.match_item("Totally different 5 g", "890123", refs, [])

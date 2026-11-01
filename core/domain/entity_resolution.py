@@ -143,6 +143,7 @@ class SkuRef:
     norm: str
     pack: float | None
     ean: str | None
+    in_master: bool = False
 
 
 def sku_refs(sellin: pd.DataFrame, sku_master: pd.DataFrame, strip_tokens: list[str]) -> list[SkuRef]:
@@ -159,13 +160,16 @@ def sku_refs(sellin: pd.DataFrame, sku_master: pd.DataFrame, strip_tokens: list[
         valid = sellin.dropna(subset=["item_name", "sku_code"])
         valid = valid[valid["sku_code"].str.fullmatch(r"[A-Za-z0-9_\-]+")]
         pairs |= set(zip(valid["sku_code"], valid["item_name"], strict=False))
-    return [SkuRef(s, n, normalise_name(n, strip_tokens), parse_pack(n), eans.get(s)) for s, n in sorted(pairs)]
+    return [SkuRef(s, n, normalise_name(n, strip_tokens), parse_pack(n), eans.get(s), s in names)
+            for s, n in sorted(pairs)]
 
 
 def match_item(platform_name: str, ean: str | None, refs: list[SkuRef], strip_tokens: list[str],
                tie_margin: float = 0.01) -> tuple[str | None, float, str, list[dict[str, Any]]]:
     """Best SKU for a platform item. Method ``tie`` when the runner-up scores within
-    ``tie_margin`` of the top (e.g. two SKUs with the same name and pack): never auto-accepted."""
+    ``tie_margin`` of the top (e.g. two SKUs with the same name and pack): never auto-accepted,
+    unless exactly one of the tied codes is in the SKU master (the others known only from sales
+    files, e.g. an older code for the same product); that code is taken."""
     if ean:
         for r in refs:
             if r.ean and r.ean == ean:
@@ -189,9 +193,14 @@ def match_item(platform_name: str, ean: str | None, refs: list[SkuRef], strip_to
     if not scored:
         return None, 0.0, "unmatched", []
     top = scored[0][1]
-    if len(scored) > 1 and scored[0][0] - scored[1][0] < tie_margin:
-        return top, round(scored[0][0], 4), "tie", cands
-    return top, round(scored[0][0], 4), "auto" if pack_known.get(top) else "auto_nopack", cands
+    tied = [c for v, c in scored if scored[0][0] - v < tie_margin]
+    if len(tied) > 1:
+        master = {r.sku_code for r in refs if r.in_master}
+        in_master = [c for c in tied if c in master]
+        if len(in_master) != 1:
+            return top, round(scored[0][0], 4), "tie", cands
+        top = in_master[0]
+    return top, round(best[top], 4), "auto" if pack_known.get(top) else "auto_nopack", cands
 
 
 def build_crosswalk(items: pd.DataFrame, refs: list[SkuRef], existing: pd.DataFrame | None,
