@@ -109,7 +109,7 @@ export function ImportScreen({ sessionId, datasets, onRefresh, onContinue }: {
             <span className="t-small muted">Showing {total} of {total} files</span>
           </div>
           {total === 0 ? (
-            <div className="card"><Empty text="No files yet. Add the platform exports you want to plan from." action="Choose files" onAction={() => input.current?.click()} /></div>
+            <div className="card"><Empty text="No files yet. Add the platform exports you want to plan from." /></div>
           ) : (
             <div className="stack g8">
               {rows.map((d) => <FileRow key={d.id} d={d} />)}
