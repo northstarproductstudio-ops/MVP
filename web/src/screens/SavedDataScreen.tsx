@@ -30,7 +30,7 @@ export function SavedDataScreen({ sessions, onOpen, onPlan, onNewChat }: {
     <main className="content">
       <div className="inner">
         <div className="pagehead">
-          <div className="stack"><h1>Saved data</h1><p className="muted">Datasets kept across chats. Reuse one in a new plan without importing again.</p></div>
+          <div className="stack"><h1>Data</h1><p className="muted">Datasets kept across chats. Reuse one in a new plan without importing again.</p></div>
           <span className="row"><SearchField value={q} onChange={setQ} placeholder="Filter datasets" width={220} /><Button variant="primary" icon={Upload} onClick={onNewChat}>Upload a dataset</Button></span>
         </div>
 

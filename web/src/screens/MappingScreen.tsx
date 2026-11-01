@@ -85,9 +85,9 @@ export function MappingScreen({ datasets, onSaved, onCrosswalk, onImport, onSave
         <div className="card">
           <div className="blank">
             <span>No files in this chat yet. Add the platform exports you want to plan from.</span>
-            <span className="t-small muted">Files imported in other chats are listed in Saved data.</span>
+            <span className="t-small muted">Files imported in other chats are listed in Data.</span>
             <span className="row"><Button variant="primary" size="sm" icon={FileUp} onClick={onImport}>Go to Import</Button>
-              <Button size="sm" icon={Database} onClick={onSavedData}>Open Saved data</Button></span>
+              <Button size="sm" icon={Database} onClick={onSavedData}>Open Data</Button></span>
           </div>
         </div>
       </div></main>

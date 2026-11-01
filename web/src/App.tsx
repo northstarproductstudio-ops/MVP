@@ -1,4 +1,4 @@
-// Shell and routes. A chat runs Import → Map → Plan (planning happens inside Ask); Saved data and
+// Shell and routes. A chat runs Import → Map → Plan (planning happens inside Ask); Data and
 // Crosswalk are workspace pages; the report viewer is a full page opened from a report card.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, LogIn } from "lucide-react";
@@ -11,6 +11,7 @@ import { AskScreen } from "./screens/AskScreen";
 import { CrosswalkScreen } from "./screens/CrosswalkScreen";
 import { ImportScreen } from "./screens/ImportScreen";
 import { MappingScreen } from "./screens/MappingScreen";
+import { PipelineScreen } from "./screens/PipelineScreen";
 import { ReportView } from "./screens/ReportView";
 import { SavedDataScreen } from "./screens/SavedDataScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -23,6 +24,7 @@ type Route =
   | { page: "saved" }
   | { page: "crosswalk" }
   | { page: "settings" }
+  | { page: "pipeline" }
   | { page: "home" };
 
 function parse(): Route {
@@ -34,6 +36,7 @@ function parse(): Route {
   if (h.startsWith("#/saved")) return { page: "saved" };
   if (h.startsWith("#/crosswalk")) return { page: "crosswalk" };
   if (h.startsWith("#/settings")) return { page: "settings" };
+  if (h.startsWith("#/pipeline")) return { page: "pipeline" };
   return { page: "home" };
 }
 
@@ -172,10 +175,10 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
   }
 
   const active: NavId = route.page === "saved" ? "saved" : route.page === "crosswalk" ? "crosswalk"
-    : route.page === "settings" ? "settings" : "chats";
+    : route.page === "settings" ? "settings" : route.page === "pipeline" ? "pipeline" : "chats";
   const datasets: Json[] = session?.datasets ?? [];
-  const here = route.page === "saved" ? "Saved data" : route.page === "crosswalk" ? "Crosswalk"
-    : route.page === "settings" ? "Settings" : session ? (session.title || "New chat") : "Chat";
+  const here = route.page === "saved" ? "Data" : route.page === "crosswalk" ? "Crosswalk"
+    : route.page === "settings" ? "Settings" : route.page === "pipeline" ? "Pipeline" : session ? (session.title || "New chat") : "Chat";
 
   let body;
   if (error) body = <div className="content"><div className="inner"><div className="card"><ErrorBlank text={`This page didn’t load. ${error}`} onAction={() => location.reload()} /></div></div></div>;
@@ -183,6 +186,7 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
     onPlan={(id) => { setPending("Create a demand plan for next month"); go(`#/s/${id}/ask`); }} />;
   else if (route.page === "crosswalk") body = <CrosswalkScreen onChanged={loadCw} />;
   else if (route.page === "settings") body = <SettingsScreen />;
+  else if (route.page === "pipeline") body = <PipelineScreen />;
   else if (route.page !== "chat" || !session) body = <div className="content"><div className="inner"><div className="card"><Loading text="Restoring this chat: messages, cards and where you were." /></div></div></div>;
   else {
     const stage = route.stage;
@@ -220,6 +224,7 @@ function Workspace({ theme: [theme, toggleTheme] }: { theme: ReturnType<typeof u
           if (n === "saved") go("#/saved");
           else if (n === "crosswalk") go("#/crosswalk");
           else if (n === "settings") go("#/settings");
+          else if (n === "pipeline") go("#/pipeline");
           else go(sessions[0] ? `#/s/${sessions[0].id}/ask` : "#/");
         }}
         onChat={(id) => go(`#/s/${id}/ask`)} onNewChat={newChat} theme={theme} onTheme={toggleTheme}
