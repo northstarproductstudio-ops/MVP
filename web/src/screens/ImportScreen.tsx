@@ -1,17 +1,18 @@
 // S-02 Import (1–10 files per chat) and S-03 Processing (reading rows and proposing field storage).
 // Saved data from other chats can be picked instead of uploading; mapping opens in the chat that holds it.
+// Uploading a file that is already imported asks whether to use the existing copy instead.
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Clock, FileSpreadsheet, FileUp, X } from "lucide-react";
 import { api, type Json } from "../api";
 import { bytes, DATASET_STATUS, dateLabel, fmt, PLATFORMS_OF } from "../components/common";
-import { Button, Empty, IconButton, Progress, StateChip } from "../components/ui";
+import { Button, Dialog, Empty, IconButton, Progress, StateChip } from "../components/ui";
 
 const MAX = 10;
 const OK = /\.(csv|xlsx|xlsm|xls)$/i;
 const DONE = ["parsed", "failed", "mapped", "ready", "duplicate"];
 const USABLE = ["parsed", "mapped", "ready"];
 
-type Rejected = { name: string; size: number; reason: string };
+type Rejected = { name: string; size: number; reason: string; status?: string; dup?: string };
 
 export function ImportScreen({ sessionId, datasets, sessions, onRefresh, onContinue, onUseSaved }: {
   sessionId: string;
@@ -30,6 +31,7 @@ export function ImportScreen({ sessionId, datasets, sessions, onRefresh, onConti
   const [processing, setProcessing] = useState(false);
   const [saved, setSaved] = useState<Json[] | null>(null);
   const [pick, setPick] = useState<string | null>(null);
+  const [dupAsk, setDupAsk] = useState<{ sid: string; title: string; files: string[]; added: number } | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const used = datasets.filter((d) => !["failed", "duplicate"].includes(d.status)).length;
   const room = MAX - used - uploading.length;
@@ -50,7 +52,19 @@ export function ImportScreen({ sessionId, datasets, sessions, onRefresh, onConti
     setUploading(take);
     try {
       const res = await api.upload(sessionId, take);
-      const ids = (res.files ?? []).map((f: Json) => f.dataset_id).filter(Boolean);
+      const files: Json[] = res.files ?? [];
+      // only new files get a reading job; duplicates (dataset_id is the existing copy) and refusals are listed
+      const ids = files.filter((f) => f.status === "uploaded").map((f) => f.dataset_id);
+      setRejected((r) => [...r, ...files.filter((f) => f.status !== "uploaded").map((f) => ({
+        name: f.file_name, size: take.find((t) => t.name === f.file_name)?.size ?? 0, status: f.status,
+        reason: f.error || "Not imported — this file could not be read.",
+        dup: f.status === "duplicate" ? f.dataset_id : undefined,
+      }))]);
+      // ask to use the chat that already holds most of the duplicates
+      const dups = files.filter((f) => f.status === "duplicate");
+      const holder = (saved ?? []).map((s) => ({ s, n: dups.filter((f) => s.datasets.some((d: Json) => d.id === f.dataset_id)).length }))
+        .filter((h) => h.n).sort((a, b) => b.n - a.n)[0]?.s;
+      if (holder) setDupAsk({ sid: holder.id, title: holder.title || "Untitled chat", files: dups.map((f) => f.file_name), added: ids.length });
       setTracking(ids);
       setProcessing(ids.length > 0);
       await onRefresh();
@@ -90,8 +104,19 @@ export function ImportScreen({ sessionId, datasets, sessions, onRefresh, onConti
   }, [tracking.join()]); // eslint-disable-line
 
   const rows = datasets.map((d) => ({ ...d, ...(live[d.id] ?? {}) }));
+  const dupDialog = dupAsk && (
+    <Dialog title="Duplicate data available" onClose={() => setDupAsk(null)}
+      footer={<><Button onClick={() => setDupAsk(null)}>Cancel</Button>
+        <Button variant="primary" iconRight={ArrowRight} onClick={() => { setDupAsk(null); onUseSaved(dupAsk.sid); }}>Yes, use existing data</Button></>}>
+      <p>{dupAsk.files.length === 1 ? "This file is" : `These ${dupAsk.files.length} files are`} already imported in “{dupAsk.title}”. Do you want to proceed with the existing data?</p>
+      <ul className="t-small" style={{ margin: 0, paddingLeft: 18 }}>{dupAsk.files.map((f) => <li key={f}>{f}</li>)}</ul>
+      <p className="t-small muted">Yes opens its variable mapping; continue from there to Plan to run the pipeline.
+        {dupAsk.added ? ` The ${dupAsk.added} new ${dupAsk.added === 1 ? "file stays" : "files stay"} in this chat.` : ""}</p>
+    </Dialog>
+  );
+
   if (processing && tracking.length) {
-    return <Processing files={rows.filter((d) => tracking.includes(d.id))} onCancel={() => setProcessing(false)} />;
+    return <><Processing files={rows.filter((d) => tracking.includes(d.id))} onCancel={() => setProcessing(false)} />{dupDialog}</>;
   }
 
   const ready = rows.filter((d) => ["parsed", "mapped", "ready"].includes(d.status)).length;
@@ -163,10 +188,14 @@ export function ImportScreen({ sessionId, datasets, sessions, onRefresh, onConti
               {uploading.map((f) => (
                 <FileRow key={`u-${f.name}`} d={{ file_name: f.name, file_size: f.size, status: "uploaded" }} />
               ))}
-              {rejected.map((r, i) => (
-                <FileRow key={`r-${i}`} d={{ file_name: r.name, file_size: r.size, status: "failed", error: r.reason }}
-                  onRemove={() => setRejected((x) => x.filter((_, j) => j !== i))} />
-              ))}
+              {rejected.map((r, i) => {
+                const owner = r.dup ? saved?.find((s) => s.datasets.some((d: Json) => d.id === r.dup)) : undefined;
+                return (
+                  <FileRow key={`r-${i}`} d={{ file_name: r.name, file_size: r.size, status: r.status ?? "failed",
+                    error: owner ? `Already imported in “${owner.title || "Untitled chat"}”. Pick it from Saved data above to use it.` : r.reason }}
+                    onRemove={() => setRejected((x) => x.filter((_, j) => j !== i))} />
+                );
+              })}
             </div>
           )}
         </div>
@@ -177,6 +206,7 @@ export function ImportScreen({ sessionId, datasets, sessions, onRefresh, onConti
           Continue to mapping · {ready}
         </Button>
       </footer>
+      {dupDialog}
     </>
   );
 }
