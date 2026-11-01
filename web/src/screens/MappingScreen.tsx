@@ -127,12 +127,19 @@ export function MappingScreen({ datasets, onSaved, onCrosswalk, onImport, onSave
     setJump(next.key);
   };
 
+  // what a save keeps for a field; proposed and confirmed are stored alike
+  const kept = (r: Json) => (!r.variable || r.state === "not_stored" ? "-"
+    : `${r.state === "custom" ? "custom" : "confirmed"}:${r.variable}:${r.category ?? ""}:${r.new_variable ? JSON.stringify(r.new_variable) : ""}`);
+
   const save = async () => {
     setSaving(true);
     setError(null);
     try {
       for (const d of parsed) {
-        const fields = rows.filter((r) => r.did === d.id).map((r) => ({
+        const mine = rows.filter((r) => r.did === d.id);
+        // a stored file left as it was keeps its data; saving it again would re-store every row
+        if (["ready", "mapped"].includes(d.status) && mine.every((r) => kept(r) === kept(r.orig))) continue;
+        const fields = mine.map((r) => ({
           sheet: r.sheet, source_field: r.source_field,
           variable: r.state === "not_stored" ? null : r.variable,
           category: r.category ?? varInfo[r.variable]?.category ?? null,

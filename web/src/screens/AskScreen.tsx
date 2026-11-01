@@ -66,6 +66,12 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
   const scroller = useRef<HTMLElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const datasets: Json[] = session.datasets ?? [];
+  const ready = datasets.some((d) => d.status === "ready");
+  // a saved mapping is re-stored by the worker (status "mapped"); plans and questions wait for it
+  const storing = datasets.filter((d) => d.status === "mapped").length;
+  const salesReady = datasets.some((d) => d.file_type === "erp_sales_orders" && d.status === "ready");
+  const canAsk = ready && !storing;
 
   useEffect(() => {
     api.suggestions(session.id).then(setSug).catch(() => setSug(null));
@@ -75,10 +81,11 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
     else setUnseen((n) => n + 1);
   }, [turns.length, turns[turns.length - 1]?.card, turns[turns.length - 1]?.runId]); // eslint-disable-line
   useEffect(() => {
+    if (pendingQuestion && storing) return; // asked from Data while files are stored: send once they are
     if (pendingQuestion) ask(pendingQuestion);
     else if (draft) setQ(draft);
     if (pendingQuestion || draft) onConsumed();
-  }, [pendingQuestion, draft]); // eslint-disable-line
+  }, [pendingQuestion, draft, storing]); // eslint-disable-line
 
   const patchLast = (fn: (t: Turn) => Turn) => setTurns((ts) => [...ts.slice(0, -1), fn(ts[ts.length - 1])]);
 
@@ -111,8 +118,6 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
     if (question) setTimeout(() => ask(question), 0);
   };
 
-  const datasets: Json[] = session.datasets ?? [];
-  const ready = datasets.some((d) => d.status === "ready");
   const empty = turns.length === 0;
   const lastCard = [...turns].reverse().find((t) => t.card)?.card;
   const platforms = PLATFORMS_OF(datasets);
@@ -147,10 +152,17 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
               <Button variant="primary" size="sm" onClick={onGoImport}>Add data</Button>
             </div>
           )}
-          {datasets.length > 0 && !ready && (
+          {storing > 0 && (
+            <Banner tone="info" role="status">
+              Storing {storing} mapped file{storing > 1 ? "s" : ""}. Planning and questions open as soon as they are stored,
+              usually within a minute.
+            </Banner>
+          )}
+          {datasets.length > 0 && !storing && !salesReady && (
             <Banner tone="warn">
               <span className="row between wrap" style={{ width: "100%" }}>
-                <span>No file in this chat has a saved mapping yet. Planning opens when a sales-order file is mapped.</span>
+                <span>{ready ? "No sales-order file (Zoho) is mapped in this chat, so a plan can't run yet. You can still ask about the other files."
+                  : "No file in this chat has a saved mapping yet. Planning opens when a sales-order file is mapped."}</span>
                 <Button size="sm" onClick={onGoMap}>Fix the mapping</Button>
               </span>
             </Banner>
@@ -164,7 +176,7 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
             </Banner>
           )}
 
-          {empty && ready && (
+          {empty && canAsk && salesReady && (
             <div className="blank" style={{ padding: "64px 0 24px" }}>
               <span className="t-lg">Ask about your sales, or plan a month.</span>
               <Button variant="primary" size="sm" onClick={() => ask("Create a demand plan for next month")}>Plan next month</Button>
@@ -223,11 +235,11 @@ export function AskScreen({ session, crosswalkCount, pendingQuestion, draft, onC
           <form className="composer" onSubmit={(e) => { e.preventDefault(); ask(q); }}>
             <label className="grow" style={{ display: "flex" }}>
               <span className="sr-only">Message</span>
-              <textarea rows={1} value={q} disabled={!ready} placeholder={ready ? "Ask about the plan, or plan another month" : datasets.length ? "Map a sales-order file first" : "Add data to this chat first"}
+              <textarea rows={1} value={q} disabled={!canAsk} placeholder={storing ? "Storing your files…" : ready ? "Ask about the plan, or plan another month" : datasets.length ? "Map a sales-order file first" : "Add data to this chat first"}
                 onChange={(e) => { setQ(e.target.value); e.target.style.height = "auto"; e.target.style.height = `${e.target.scrollHeight}px`; }}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(q); } }} />
             </label>
-            <button type="submit" className="sendbtn" aria-label="Send" disabled={busy || !q.trim() || !ready}><ArrowUp size={16} aria-hidden="true" /></button>
+            <button type="submit" className="sendbtn" aria-label="Send" disabled={busy || !q.trim() || !canAsk}><ArrowUp size={16} aria-hidden="true" /></button>
           </form>
           <p className="t-caption muted" style={{ marginTop: 6 }}>{busy ? "Working on the reply…" : "Enter sends · Shift+Enter adds a line"}</p>
         </div>
